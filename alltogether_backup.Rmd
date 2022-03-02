@@ -1,0 +1,2909 @@
+---
+title: "alltogether"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, cache = FALSE, cache.lazy = FALSE, fig.align = 'center')
+```
+
+## Introduction
+
+```{r LoadLibraries}
+
+library(tidyverse)
+library(RColorBrewer)
+library(colorRamps)
+wd <- file.path(getwd())
+#rm(list=setdiff(ls(), "wd"))
+```
+
+Reading tumor cells new biopsy
+```{r, reading Sox2P data,echo=FALSE , eval=FALSE}
+
+df_data_Sox2 <- read.csv2(file.path(wd, 'Data', 'df_data_Sox2P_4gated.csv'), stringsAsFactors = FALSE)
+
+meta_table <- read.csv2(file.path(wd,'Data','Metatable_Biopsies_forPouya_FDS.csv')) %>% rename(sample.id=Sample_ID) %>%
+  rename(region = Region) %>%
+  rename(treatment = Treatment) %>%
+  rename(batch = Batch) %>%
+  rename(sample = Sample.BC) %>% select(-X,-X.1,-Original.filename)
+
+df_data_Sox2 <- df_data_Sox2 %>% left_join(meta_table) %>% 
+  gather(marker,value, BAX:Vimentin) %>% 
+  dplyr::filter(label!='BC') 
+
+df_data_Sox2 <- df_data_Sox2 %>%
+  group_by(sample.id, region, treatment, label, batch, OID, marker) %>% 
+  summarise(value = max(value)) %>% 
+  ungroup()
+
+
+
+df_data_Sox2_annotated <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'),stringsAsFactors = FALSE)
+
+df_data_Sox2 <- df_data_Sox2 %>% mutate(value = sinh(value)) %>% spread(marker,value)
+df_data_Sox2_annotated <- df_data_Sox2_annotated %>% select(sample.id:OID, predicted.celltype)
+
+Sox2P <- df_data_Sox2 %>% left_join(df_data_Sox2_annotated )%>% na.omit(predicted.celltype)
+
+
+# tmp_plot <- Sox2P %>% gather(marker,value, BAX:Vimentin)%>%
+#   mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+# 
+# ggplot(tmp_plot, aes(value, color = treatment)) + 
+#   # geom_histogram(breaks = 128) +
+#   geom_density() + 
+#   theme_bw() + facet_grid(sample.id~marker, scales = 'free') #+ scale_y_log10()
+
+
+```
+
+reading CD45 positive of new biopsies
+```{r, reading CD45P data, echo=FALSE, eval=FALSE}
+
+df_data_CD45P <- read.csv2(file.path(wd, 'Data', 'df_data_CD45P.csv'), stringsAsFactors = FALSE)
+
+
+meta_table <- read.csv2(file.path(wd,'Data','Metatable_Biopsies_forPouya_FDS.csv')) %>% rename(sample.id=Sample_ID) %>%
+  rename(region = Region) %>%
+  rename(treatment = Treatment) %>%
+  rename(batch = Batch) %>%
+  rename(sample = Sample.BC) %>% select(-X,-X.1,-Original.filename)
+
+
+df_data_CD45P <- df_data_CD45P %>% left_join(meta_table) %>% 
+  gather(marker,value, BAX:Vimentin) %>% 
+  dplyr::filter(label!='BC') %>% 
+  dplyr::filter(CD45P == TRUE) %>%
+  select(-CD45P)
+
+
+df_data_CD45P <- df_data_CD45P %>%
+  group_by(sample.id, region, treatment, label, batch, OID, marker) %>% 
+  summarise(value = max(value)) %>% 
+  ungroup()
+
+
+df_data_CD45P_annotated <- read.csv2(file.path(wd, 'Data', 'data_annotated_CD45P_subtypes.csv'),stringsAsFactors = FALSE)
+
+df_data_CD45P <- df_data_CD45P %>% spread(marker,value)
+df_data_CD45P_annotated <- df_data_CD45P_annotated %>% select(sample.id:OID, predicted.celltype)
+
+CD45P <- df_data_CD45P %>% left_join(df_data_CD45P_annotated) %>% na.omit(predicted.celltype)
+
+
+df_data <- rbind(Sox2P,CD45P)
+
+write.csv2(df_data, file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'), row.names = FALSE)
+```
+
+
+putting to gther all cells in new biopsy dataset
+```{r, putting together the whole dataset, density plots, fig.width=16, fig.height=12, echo=FALSE}
+#df_data <- rbind(t,t2)
+
+df_data <- read.csv2(file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'),stringsAsFactors = FALSE) %>% gather(marker,value, BAX:Vimentin)
+
+markers <- c('CD44','CD24', 'Vimentin','Nestin', 'PDGFRa', 'GFAP','Olig2','CD68', 'CD11b', 'CD11c', 'CD3','CD15','Sox2')
+markers_2 <- c('CD68', 'CD11b', 'CD11c', 'CD3','CD15','Sox2')
+
+#df_data <- df_data %>% gather(marker,value, BAX:Vimentin)
+tmp_plot <- df_data %>% dplyr::filter(marker%in%markers & region == 'Bulk') %>%
+  mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+ggplot(tmp_plot , aes(asinh(value), color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(sample.id~marker, scales = 'free') +
+  ggtitle('markers density plots for the whole dataset, bulk only')
+
+# for (i in unique(tmp_plot$marker)){
+#   print(ggplot(dplyr::filter(tmp_plot,marker==i), aes(value,col=color.id)) +
+#         geom_density() + ggtitle(i)+
+#         theme_bw())  
+# } 
+
+
+plot <- df_data %>% dplyr::filter(!predicted.celltype%in% c("myeloid cells" ,"T_cells"))%>% mutate(value = asinh(value))
+tmp_plot <- plot %>% dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tumor cells, bulk only, bg dplyr::filtered')
+
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% markers), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tumor cells, bulk only, bg dplyr::filtered')
+
+
+
+
+plot <- df_data %>% dplyr::filter(predicted.celltype=="T_cells")%>% mutate(value = asinh(value))
+tmp_plot <- plot %>% dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tcells, bulk only, bg dplyr::filtered')
+
+
+plot <- df_data %>% dplyr::filter(predicted.celltype=="myeloid cells") %>% mutate(value = asinh(value))
+tmp_plot <- plot %>%  dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('density plots for myeloid cells, bulk only, bg dplyr::filtered')
+```
+
+
+
+plots for new biopsy
+```{r, density plots selected markers, , fig.width=16, fig.height=12, echo=FALSE}
+#df_data <- df_data %>% gather(marker,value, BAX:Vimentin)
+tmp_plot <- df_data %>% dplyr::filter(marker%in%markers_2 & region == 'Bulk') %>%
+  mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+ggplot(tmp_plot %>%  dplyr::filter(value>0.02) , aes(asinh(value), color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') +
+  ggtitle('markers density plots for the whole dataset, bulk only')
+
+# for (i in unique(tmp_plot$marker)){
+#   print(ggplot(dplyr::filter(tmp_plot,marker==i), aes(value,col=color.id)) +
+#         geom_density() + ggtitle(i)+
+#         theme_bw())  
+# } 
+
+
+```
+
+
+
+```{r, density plots for inv vs bulk samples, echo=FALSE}
+plot <- df_data %>% dplyr::filter(predicted.celltype=="myeloid cells") %>% mutate(value = asinh(value))
+tmp_plot <- plot %>%  dplyr::filter(value>0.02 & sample.id %in% c('LBT231', 'LBT240')) %>%mutate(color.id = paste(sample.id, region, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~color.id, scales = 'free') + ggtitle('density plots for myeloid cells, bulk and inv, bg dplyr::filtered')
+
+plot <- df_data %>% dplyr::filter(predicted.celltype=="T_cells") %>% mutate(value = asinh(value))
+tmp_plot <- plot %>%  dplyr::filter(value>0.02 & sample.id %in% c('LBT231', 'LBT240')) %>%mutate(color.id = paste(sample.id, region, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~color.id, scales = 'free') + ggtitle('density plots for T-cells, bulk and inv, bg dplyr::filtered')
+
+```
+
+
+
+```{r zscore normalized markers values and asinhvalues, fig.height = 16, fig.width = 16}
+
+df_data <- df_data %>%
+  mutate(value = asinh(value)) %>% 
+  group_by(marker) %>%
+  mutate(value = scale(value)) %>%
+  ungroup()
+
+
+# ggplot(df_data, aes(value, color = as.character(batch))) +
+#   geom_density() +
+#   theme_bw() + facet_wrap(~marker, ncol = 7, scales = 'free') #+ scale_y_log10()
+
+
+df_data <- df_data %>%
+  mutate(value = ifelse(value > 3, 3, value),
+         value = ifelse(value < -3, -3, value))
+
+tmp_plot<- df_data %>% mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+# 
+ggplot(tmp_plot, aes(value, color = treatment)) +
+  # geom_histogram(breaks = 128) +
+  geom_density() +
+  theme_bw() + facet_grid(sample.id~marker, scales = 'free') #+ scale_y_log10()
+```
+
+
+
+
+
+
+
+```{r, density plots of zscored values selected markers, fig.width = 8, fig.height=12,echo=FALSE}
+#df_data <- df_data %>% gather(marker,value, BAX:Vimentin)
+tmp_plot <- df_data %>% dplyr::filter(marker%in%markers_2 & region == 'Bulk') %>%
+  mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+ggplot(tmp_plot , aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(sample.id~marker, scales = 'free') +
+  ggtitle('selected markers zscored data density plots  for the whole dataset, bulk only')
+
+# for (i in unique(tmp_plot$marker)){
+#   print(ggplot(dplyr::filter(tmp_plot,marker==i), aes(value,col=color.id)) +
+#         geom_density() + ggtitle(i)+
+#         theme_bw())  
+# } 
+
+
+```
+
+
+feature selection for Dimensionality reduction
+
+
+```{r Correlation Analysis, fig.height = 6, fig.width = 6}
+
+# df_data <- df_data %>% mutate(value = round(value, 2))
+#df_data2 <-df_data
+ 
+df_data <- df_data %>%
+  spread(marker, value)
+
+# df_data[which(is.na(df_data), arr.ind = TRUE)] <- 0
+
+tmp_data <- df_data %>% 
+  select(c('Sox2','CD45','CD3')) %>% 
+  #as.numeric()%>%
+  unique() %>% 
+  as.matrix()
+
+r <- cor(tmp_data)
+
+diag(r) <- 0
+
+col1 <- colorRampPalette(brewer.pal(9, 'BrBG'))
+corrplot::corrplot.mixed(r, upper = 'square', tl.pos = 'lt', tl.cex = 0.5, tl.col = 'black', number.cex = 0.4, order = 'hclust', mar = c(1, 1, 1, 1), upper.col = col1(100))
+
+```
+Umap, tsne, PCA
+```{r, downsampling and dimensionality reduction, echo=FALSE,eval=FALSE}
+
+set.seed(1234)
+tmp_sample <- df_data %>% 
+  group_by(sample.id,region, predicted.celltype) %>%
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  mutate(P = log10(N)) %>% 
+  mutate(M = sum(P)) %>% 
+  mutate(S = 40000/M*P)
+  
+tmp_data_reduced <- df_data %>% 
+  left_join(tmp_sample %>% select(sample.id,region, predicted.celltype, S)) %>% 
+  group_by(sample.id,region, predicted.celltype) %>%
+  sample_n(S, replace = TRUE) %>% 
+  ungroup() %>%
+  #distinct(CD44,CD24, Olig2,Vimentin,Nestin,GFAP,PDGFRa,CD68, CD11b, CD11c, CD3,CD15 , .keep_all = TRUE)%>% 
+  distinct(Sox2, CD3,CD45, .keep_all = TRUE) %>%
+  unique()
+
+tmp_data <- tmp_data_reduced %>%
+  select(c('Sox2','CD3','CD45')) %>% 
+  as.matrix() %>% unique() 
+print(dim(tmp_data))
+
+library(umap)
+custom.config <- umap.defaults
+
+custom.config$metric <- 'cosine'
+custom.config$n_neighbors <- 100
+
+tmp_umap <- umap(tmp_data, custom.config)
+tmp_tsne <- Rtsne::Rtsne(tmp_data, perplexity = 20)
+tmp_pca <- prcomp(tmp_data)
+
+
+tmp_data <- tmp_data_reduced %>%
+  # as.data.frame()
+  mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+  mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+  mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) 
+
+write.csv2(tmp_data, file.path(wd, 'Results','DR-wholeDataset1.csv'), row.names = FALSE)
+```
+
+```{r, redefining names of celltypes, echo=FALSE}
+
+tmp_data <- read.csv2(file.path(wd, 'Results','DR-wholeDataset1.csv'),stringsAsFactors = FALSE) %>% select(-S)
+
+tmp_data_3subtype<- tmp_data %>% 
+  mutate(predicted.celltype = ifelse(predicted.celltype%in%c("T_cells","myeloid cells"),predicted.celltype,"Tumor"))
+
+
+
+
+```
+
+
+Plot DR using 40000 cells for dimensionality reduction
+
+```{r plot DR using 40000 cells for dimensionality reduction, fig.height = 4, fig.width = 8}
+
+
+tmp_plot <- tmp_data
+
+tmp_centroids <- tmp_plot %>% 
+  group_by(predicted.celltype) %>% 
+  summarise(PC1 = median(PC1), PC2 = median(PC2),
+            uMap1 = median(uMap1), uMap2 = median(uMap2),
+            tsne1 = median(tsne1), tsne2 = median(tsne2)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(PC1, PC2, color = predicted.celltype)) + geom_point() + theme_bw()  + geom_label(data = tmp_centroids, aes(PC1, PC2, color = predicted.celltype, label = predicted.celltype))
+ggplot(tmp_plot, aes(uMap1, uMap2, color = predicted.celltype)) + geom_point(size = 0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(uMap1, uMap2, color = predicted.celltype, label = predicted.celltype))
+ggplot(tmp_plot, aes(tsne1, tsne2, color = predicted.celltype)) + geom_point(size = 0.01) + theme_bw() + geom_label(data = tmp_centroids, aes(tsne1, tsne2, color = predicted.celltype, label = predicted.celltype))
+
+```
+Plot DR
+3subtypes, using 40000 samples for DR
+```{r plot DR, 3subtypes, using 40000 samples for DR, fig.height = 4, fig.width = 8}
+
+
+tmp_plot <- tmp_data_3subtype
+
+tmp_centroids <- tmp_plot %>% 
+  group_by(predicted.celltype) %>% 
+  summarise(PC1 = median(PC1), PC2 = median(PC2),
+            uMap1 = median(uMap1), uMap2 = median(uMap2),
+            tsne1 = median(tsne1), tsne2 = median(tsne2)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(PC1, PC2, color = predicted.celltype)) + geom_point(size = 0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(PC1, PC2, color = predicted.celltype, label = predicted.celltype))
+ggplot(tmp_plot, aes(uMap1, uMap2, color = predicted.celltype)) + geom_point(size = 0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(uMap1, uMap2, color = predicted.celltype, label = predicted.celltype))
+ggplot(tmp_plot, aes(tsne1, tsne2, color = predicted.celltype)) + geom_point(size = 0.01) + theme_bw() + geom_label(data = tmp_centroids, aes(tsne1, tsne2, color = predicted.celltype, label = predicted.celltype))
+```
+plot DR with samples using 400000 for DR,
+```{r plot DR with samples using 400000 for DR, fig.height = 4, fig.width = 6}
+
+
+tmp_plot <- tmp_data
+
+tmp_centroids <- tmp_plot %>% 
+  group_by(sample.id) %>% 
+  summarise(PC1 = median(PC1), PC2 = median(PC2),
+            uMap1 = median(uMap1), uMap2 = median(uMap2),
+            tsne1 = median(tsne1), tsne2 = median(tsne2)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(PC1, PC2, color = sample.id)) + geom_point(size = 0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(PC1, PC2, color = sample.id, label = sample.id))
+ggplot(tmp_plot, aes(uMap1, uMap2, color = sample.id)) + geom_point(size = 0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(uMap1, uMap2, color = sample.id, label = sample.id))
+ggplot(tmp_plot, aes(tsne1, tsne2, color = sample.id)) + geom_point(size = 0.01) + theme_bw() + geom_label(data = tmp_centroids, aes(tsne1, tsne2, color = sample.id, label = sample.id))
+
+```
+
+checking CD44 in myeloid cells
+
+```{r,checking CD44 in myeloid cells,fig.height = 4, fig.width = 6, echo=FALSE}
+
+tmp_myloides <- tmp_data %>% gather(marker,value, BAX:Vimentin) %>% dplyr::filter(predicted.celltype=="myeloid cells", marker=='CD44')
+ggplot(tmp_myloides, aes(uMap1, uMap2, color = value)) + geom_point() + theme_bw() + facet_wrap(~treatment, ncol = 7) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0)
+box_plot <- tmp_myloides %>% spread(marker,value)
+
+ggplot(box_plot, aes(x=treatment, y=CD44)) + 
+  geom_boxplot(notch=TRUE)#+ facet_wrap(~sample.id)
+
+ggplot(box_plot, aes(x=treatment, y=CD44)) + 
+  geom_boxplot(notch=TRUE)+ facet_wrap(~treatment)
+```
+showing some markers' expressions
+```{r plot DR markers,selected markers, fig.height = 4, fig.width = 16,eval=FALSE}
+tmp_plot <- tmp_data %>% 
+  gather(marker, value, c('Sox2','CD45','CD3','CD11b','CD11c','CD15'))
+library("colorRamps")
+#ggplot(tmp_plot, aes(PC1, PC2, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, ncol = 7) + "viridis::"scale_color_viridis()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(tsne1, tsne2, color = value)) + geom_point(size=0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) +  scale_color_viridis_c(option = "plasma")#scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+```
+
+changing colorbar scale
+
+```{r plot DR markers,selected markers,per marker, fig.height = 4, fig.width = 4,eval=FALSE}
+tmp_plot <- tmp_data %>% 
+  gather(marker, value, c('Sox2','CD45','CD3','CD11b','CD11c','CD15'))
+  
+mar <- c('Sox2','CD45','CD3','CD11b','CD11c','CD15')
+lev <- c('0.5', '0.5', '1.5', '1', '1', '0' )
+for (i in 1:length(lev)){
+  tmp<- tmp_plot %>% dplyr::filter(marker==mar[i])
+  # print(ggplot(tmp_plot%>% dplyr::filter(marker==i), aes(PC1, PC2, color = value)) + geom_point() + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) +ggtitle(i))
+  print(ggplot(tmp, aes(uMap1, uMap2, color = value)) + geom_point(size = 0.01) + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = as.numeric(lev[i])) +ggtitle(mar[i]))
+  # print(ggplot(tmp%>% dplyr::filter(marker==i), aes(tsne1, tsne2, color = value)) + geom_point() + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) +ggtitle(i))
+  # 
+}
+
+```
+
+
+
+```{r plot DR markers, fig.height = 4, fig.width = 16, eval = FALSE}
+tmp_plot <- tmp_data %>% 
+  gather(marker, value, markers, 'Sox2','CD45')
+
+ggplot(tmp_plot, aes(PC1, PC2, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value)) + geom_point(size= 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(tsne1, tsne2, color = value)) + geom_point(size= 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+```
+
+
+
+
+
+
+
+```{r, downsampling and dimensionality reduction for two samples, echo=FALSE,eval=FALSE}
+
+set.seed(1234)
+tmp_sample <- df_data %>% dplyr::filter(sample.id %in% c('UKK011', 'LBT293')) %>%
+  group_by(sample.id,region, predicted.celltype) %>%
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  mutate(P = log10(N)) %>% 
+  mutate(M = sum(P)) %>% 
+  mutate(S = 100000/M*P)
+  
+tmp_data_reduced <- df_data %>% dplyr::filter(sample.id %in% c('UKK011', 'LBT293')) %>%
+  left_join(tmp_sample %>% select(sample.id,region, predicted.celltype, S)) %>% 
+  group_by(sample.id,region, predicted.celltype) %>%
+  sample_n(S, replace = TRUE) %>% 
+  ungroup() %>%
+  #distinct(CD44,CD24, Olig2,Vimentin,Nestin,GFAP,PDGFRa,CD68, CD11b, CD11c, CD3,CD15 , .keep_all = TRUE)%>% 
+  distinct(Sox2, CD3,CD45, .keep_all = TRUE) %>%
+  unique()
+
+tmp_data <- tmp_data_reduced %>%
+  select(c('Sox2','CD3','CD45')) %>% 
+  as.matrix() %>% unique() 
+print(dim(tmp_data))
+
+library(umap)
+custom.config <- umap.defaults
+
+custom.config$metric <- 'cosine'
+custom.config$n_neighbors <- 100
+
+tmp_umap <- umap(tmp_data, custom.config)
+tmp_tsne <- Rtsne::Rtsne(tmp_data, perplexity = 20)
+tmp_pca <- prcomp(tmp_data)
+
+
+tmp_data <- tmp_data_reduced %>%
+  # as.data.frame()
+  mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+  mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+  mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) 
+
+write.csv2(tmp_data, file.path(wd, 'Results','DR-wholeDataset_2samples10X.csv'), row.names = FALSE)
+```
+
+
+
+```{r, redefining names of celltypes for two samples using 100000 samples for DR, echo=FALSE}
+
+tmp_data <- read.csv2(file.path(wd, 'Results','DR-wholeDataset_2samples10X.csv'),stringsAsFactors = FALSE) %>% select(-S)
+
+tmp_data_3subtype<- tmp_data %>% 
+  mutate(predicted.celltype = ifelse(predicted.celltype%in%c("T_cells","myeloid cells"),predicted.celltype,"Tumor"))
+
+
+
+
+```
+
+
+Plot DR using 100000 samples for DR
+
+```{r plot DR for two samples, fig.height = 4, fig.width = 6}
+
+
+tmp_plot <- tmp_data_3subtype
+
+tmp_centroids <- tmp_plot %>% 
+  group_by(predicted.celltype) %>% 
+  summarise(PC1 = median(PC1), PC2 = median(PC2),
+            uMap1 = median(uMap1), uMap2 = median(uMap2),
+            tsne1 = median(tsne1), tsne2 = median(tsne2)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(PC1, PC2, color = predicted.celltype)) + geom_point(size=0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(PC1, PC2, color = predicted.celltype, label = predicted.celltype))
+ggplot(tmp_plot, aes(uMap1, uMap2, color = predicted.celltype)) + geom_point(size=0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(uMap1, uMap2, color = predicted.celltype, label = predicted.celltype)) #+guides(color=guide_legend(override.aes = list(shape = 21, size=3)))+geom_sf(tmp_plot,aes(fill = predicted.celltype), show.legend = "point")
+ggplot(tmp_plot, aes(tsne1, tsne2, color = predicted.celltype)) + geom_point(size=0.01) + theme_bw() + geom_label(data = tmp_centroids, aes(tsne1, tsne2, color = predicted.celltype, label = predicted.celltype))
+
+```
+
+
+```{r, showing expression of markers we used for clustering,  fig.height =5, fig.width = 12}
+
+
+tmp_plot <- tmp_data %>% 
+  gather(marker, value, 'Sox2', 'CD3', 'CD68','CD45',markers)
+
+ggplot(tmp_plot, aes(PC1, PC2, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value)) + geom_point(size= 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) #scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(tsne1, tsne2, color = value)) + geom_point(size= 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0)#scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value)) + geom_point(size= 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradientn(colours=matlab.like(7))# scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) #scale_color_gradientn(colours=matlab.like(7))
+```
+
+
+
+
+showing some markers' expressions
+```{r plot DR markers,selected markers100000, fig.height = 4, fig.width = 16}
+tmp_plot <- tmp_data %>% 
+  gather(marker, value, c('Sox2','CD45','CD3','CD11b','CD11c','CD15'))
+library("colorRamps")
+#ggplot(tmp_plot, aes(PC1, PC2, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, ncol = 7) + "viridis::"scale_color_viridis()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value)) + geom_point(size = 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(tsne1, tsne2, color = value)) + geom_point(size = 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradientn(colours=magenta2green(7)) #viridis::scale_color_viridis()
+```
+
+changing colorbar scale for 1000000
+
+```{r plot DR markers,selected markers 100000,per marker, fig.height = 4, fig.width = 4}
+tmp_plot <- tmp_data %>% 
+  gather(marker, value, c('Sox2','CD45','CD3','CD11b','CD11c','CD15'))
+  
+mar <- c('Sox2','CD45','CD3','CD11b','CD11c','CD15')
+lev <- c('0.5', '0.5', '1.5', '1', '1', '0' )
+for (i in 1:length(lev)){
+  tmp<- tmp_plot %>% dplyr::filter(marker==mar[i])
+  # print(ggplot(tmp_plot%>% dplyr::filter(marker==i), aes(PC1, PC2, color = value)) + geom_point() + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) +ggtitle(i))
+  print(ggplot(tmp, aes(uMap1, uMap2, color = value)) + geom_point(size = 0.01) + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = as.numeric(lev[i])) +ggtitle(mar[i]))
+  # print(ggplot(tmp%>% dplyr::filter(marker==i), aes(tsne1, tsne2, color = value)) + geom_point() + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) +ggtitle(i))
+  # 
+}
+
+```
+
+
+
+
+```{r load fcs data for sox2p old biopsies, eval = FALSE}
+
+tmp_files <- list.files(file.path(wd, 'SOX2P_OldData'), pattern = 'csv')
+
+df_data <- lapply(tmp_files, function(x){
+  tmp_data <- read.csv(file.path(wd, 'SOX2P_OldData', x))
+  tmp_exp <- tmp_data %>% as.data.frame() %>% rename(SOX2P = selected_) %>% select(-c(Sox2h,CD68h))
+}) %>% bind_rows() 
+
+dir.create(file.path(wd, 'Data'))
+write.csv2(df_data, file.path(wd, 'Data', 'df_data_old_Sox2P.csv'), row.names = FALSE)
+
+```
+
+
+
+```{r load fcs data for CD3P old biopsies, eval = FALSE}
+
+tmp_files <- list.files(file.path(wd, 'CD3P'), pattern = 'csv')
+
+df_data <- lapply(tmp_files, function(x){
+  tmp_data <- read.csv(file.path(wd, 'CD3P', x))
+  tmp_exp <- tmp_data %>% as.data.frame() %>% rename(CD3P = selected_) %>% select(-c(Sox2h,CD3h))
+}) %>% bind_rows() 
+
+dir.create(file.path(wd, 'Data'))
+write.csv2(df_data, file.path(wd, 'Data', 'df_data_old_CD3P.csv'), row.names = FALSE)
+
+```
+
+
+
+```{r load fcs data CD68P , eval = FALSE}
+
+tmp_files <- list.files(file.path(wd, 'CD68P'), pattern = 'csv')
+
+df_data <- lapply(tmp_files, function(x){
+  tmp_data <- read.csv(file.path(wd, 'CD68P', x))
+  tmp_exp <- tmp_data %>% as.data.frame() %>% rename(CD68P = selected_) %>% select(-c(Sox2h,CD68h))
+}) %>% bind_rows() 
+
+dir.create(file.path(wd, 'Data'))
+write.csv2(df_data, file.path(wd, 'Data', 'df_data_old_CD68P.csv'), row.names = FALSE)
+
+```
+
+
+
+
+
+
+```{r, reading all data together, echo=FALSE}
+
+
+
+df_data_new <- read.csv2(file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'),stringsAsFactors = FALSE)
+
+df_data_old_SOX2P <- read.csv2(file.path(wd, 'Data', 'df_data_old_Sox2P.csv'),stringsAsFactors = FALSE)
+df_data_old_CD3P <- read.csv2(file.path(wd, 'Data', 'df_data_old_CD3P.csv'),stringsAsFactors = FALSE)
+df_data_old_CD68P <- read.csv2(file.path(wd, 'Data', 'df_data_old_CD68P.csv'),stringsAsFactors = FALSE)
+
+```
+
+showing plots of dimensional reduction for new biopsies and shoing the expression of different markers:
+
+```{r, reproducing DR plots for new biopsy data, tumor population, echo=FALSE}
+
+
+DR_temp <- df_data_new %>% dplyr::filter(!predicted.celltype%in%c("myeloid cells","T_cells")) %>%  gather(marker,value, BAX:Vimentin) %>% mutate(value = asinh(value)) %>% spread(marker,value)
+
+
+DR_temp_arcihve <- read.csv2(file.path(wd, 'Results', 'phenotypic_identification_umap_Sox2P.csv'), stringsAsFactors = FALSE)
+
+tmp_centroids <- DR_temp_arcihve %>% 
+  group_by(predicted.celltype) %>% 
+  summarise(tsne1 = median(tsne1), tsne2 = median(tsne2), uMap1 = median(uMap1), uMap2 = median(uMap2), PC1 = median(PC1), PC2 = median(PC2)) %>% 
+  ungroup()
+
+ggplot(DR_temp_arcihve, aes(tsne1, tsne2, color = predicted.celltype)) +
+  geom_point(size = 0.01) +
+  theme_bw() +
+  geom_label(data = tmp_centroids, aes(tsne1, tsne2, label = predicted.celltype), col = 'black') +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(legend.position = 'none')
+
+ggplot(DR_temp_arcihve, aes(uMap1, uMap2, color = predicted.celltype)) +
+  geom_point(size = 0.01) +
+  theme_bw() +
+  # geom_label(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), col = 'black') +
+  geom_label(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype, col = predicted.celltype), size = 6) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(legend.position = 'none')
+
+#png(file.path(wd, 'paper_figures', 'uMap_predicted_celltype.png'), width = 6, height = 6, units = 'in', res = 300)
+ggplot(DR_temp_arcihve, aes(uMap1, uMap2, color = predicted.celltype)) +
+  geom_point(size = 0.01) +
+  theme_bw() +
+  coord_equal() +
+  ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), size = 6) +
+  guides(colour = guide_legend(override.aes = list(size=0.01))) +
+  theme(axis.title.x = element_text(size = 9), axis.title.y = element_text(size = 9)) +
+  theme(legend.position = 'none')
+#dev.off()
+
+ggplot(DR_temp_arcihve, aes(PC1, PC2, color = predicted.celltype),size=6) +
+  geom_point(size = 0.01) +
+  theme_bw() +
+  geom_label(data = tmp_centroids, aes(PC1, PC2, label = predicted.celltype), col = 'black') +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(legend.position = 'none')
+```
+
+
+
+
+
+
+
+```{r uMap patients}
+
+DR_temp_arcihve <- DR_temp_arcihve %>% mutate(sample_id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_centroids <- DR_temp_arcihve %>% 
+  group_by(sample.id) %>% 
+  summarise(tsne1 = median(tsne1), tsne2 = median(tsne2), uMap1 = median(uMap1), uMap2 = median(uMap2), PC1 = median(PC1), PC2 = median(PC2)) %>% 
+  ungroup()
+
+ggplot(DR_temp_arcihve, aes(uMap1, uMap2, color = sample.id)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  coord_equal() +
+  # ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), size = 7) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16)) +
+  theme(legend.position = 'none')
+
+#png(file.path(wd,'paper_figures', 'uMap_sample_id.png'), width = 6, height = 6, units = 'in', res = 300)
+ggplot(DR_temp_arcihve, aes(uMap1, uMap2, color = sample.id)) +
+  geom_point(size = 0.01) +
+  theme_bw() +
+  coord_equal() +
+  ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = sample.id), size = 5) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16)) +
+  theme(legend.position = 'none')
+  # theme(legend.position = 'none')
+#dev.off()
+
+# tmp_centroids <- tmp_data %>% 
+#   group_by(sample_type) %>% 
+#   summarise(tsne1 = median(tsne1), tsne2 = median(tsne2), uMap1 = median(uMap1), uMap2 = median(uMap2), PC1 = median(PC1), PC2 = median(PC2)) %>% 
+#   ungroup()
+
+ggplot(DR_temp_arcihve, aes(uMap1, uMap2, color = sample.id)) +
+  geom_point(size = 0.01) +
+  theme_bw() +
+  coord_equal() +
+  # geom_label(data = tmp_centroids, aes(uMap1, uMap2, label = sample_type), size = 7, show.legend = FALSE) +
+  # ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = sample_type), size = 7) +
+  guides(colour = guide_legend(override.aes = list(size=5))) +
+  theme(axis.title.x = element_text(size = 10), axis.title.y = element_text(size = 10)) +
+  theme(legend.title = element_text(size =10), legend.text = element_text(size = 10))
+  # theme(legend.position = 'none')
+
+```
+
+```{r uMap markers,echo=FALSE}
+DR_temp_arcihve <- read.csv2(file.path(wd, 'Results', 'phenotypic_identification_umap_Sox2P.csv'), stringsAsFactors = FALSE)
+DR_temp_arcihve <- DR_temp_arcihve %>% select(-c(CD24, CD44  ,GFAP , Nestin , Olig2 , PDGFRa ,Vimentin))
+
+midpoint = 0
+tmp_plot <- DR_temp %>% left_join(DR_temp_arcihve, c('sample.id', 'region', 'treatment', 'label', 'batch', 'OID', 'predicted.celltype')) %>% na.omit(uMap2,uMap1)
+
+
+tmp_plot<- tmp_plot %>% gather(marker,value, BAX:Vimentin) %>% 
+  group_by(marker) %>% 
+  dplyr::mutate(value = scale(value)) %>% 
+  ungroup() %>% 
+  mutate(value = ifelse(value > 3, 3, value)) %>% 
+  mutate(value = ifelse(value < -3, -3, value))
+
+
+
+tmp_plot <- tmp_plot %>% 
+  dplyr::filter(marker %in% c('Olig2' , 'CD24' , 'CD44' , 'Vimentin' , 'Nestin', 'Sox2', "PDGFRa", "GFAP")) #-ID, OID, -uMap1, -uMap2)
+
+#png(file.path(wd, 'paper_figures', 'uMap_markers_Sox2P.png'), width = 16, height = 8, units = 'in', res = 300)
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value, alpha = value)) +
+  geom_point(size = 0.01) +
+  theme_bw() +
+  coord_equal() +
+  # ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), size = 7) +
+  facet_wrap(~marker, nrow = 2, switch = 'y') + 
+  scale_color_gradient2(low = 'royalblue', mid = 'white', midpoint = 0, high = 'firebrick') +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16), strip.text = element_text(size = 12)) +
+  theme(legend.position = 'none')
+#dev.off()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value, alpha = value)) +
+  geom_point(size = 0.01, show.legend = T) +
+  theme_bw() +
+  coord_equal() +
+  facet_wrap(~marker, nrow = 2, switch = 'y') + scale_color_gradientn(colours=matlab.like(7)) 
+
+```
+
+
+
+
+
+
+```{r, visualizing gated data for old biopsies,  fig.width=14, fig.height=10, echo=FALSE}
+
+ggplot(df_data_old_SOX2P , aes(x = asinh(Sox2),y = asinh(CD68),col = SOX2P))+ geom_point(size = 0.01) + facet_wrap(~ID) +ggtitle('Sox2P population in old biopsies')
+
+ggplot(df_data_old_CD3P , aes(x = asinh(Sox2),y = asinh(CD3),col = CD3P))+ geom_point(size = 0.01) + facet_wrap(~ID) +ggtitle('CD3P population in old biopsies')
+
+ggplot(df_data_old_CD68P , aes(x = asinh(Sox2),y = asinh(CD68),col = CD68P))+ geom_point(size = 0.01) + facet_wrap(~ID) +ggtitle('CD68P population in old biopsies')
+
+```
+
+
+
+
+```{r, putting together old biopsy data, echo=FALSE,eval=FALSE}
+
+df_data_old_SOX2P <- df_data_old_SOX2P %>% dplyr::filter(SOX2P == 'TRUE') %>%  mutate(predicted.celltype = 'tumor') %>% select(-SOX2P)
+df_data_old_CD3P <- df_data_old_CD3P %>% dplyr::filter(CD3P == 'TRUE') %>%  mutate(predicted.celltype = 'T_cells') %>% select(-CD3P)
+df_data_old_CD68P <- df_data_old_CD68P %>% dplyr::filter(CD68P == 'TRUE') %>%  mutate(predicted.celltype = 'myeloid cells') %>% select(-CD68P)
+
+df_data_old <- rbind(df_data_old_SOX2P,df_data_old_CD3P,df_data_old_CD68P) %>% dplyr::filter(treatment%in%c("AMG232" ,"Control" ,"RT")) 
+write.csv2(df_data_old, file.path(wd , 'Data', 'OldBiopsies-wholedataset.csv'),row.names = FALSE)
+```
+
+
+
+
+
+
+
+```{r, downsampling and dimensionality reduction for old biopsy samples, echo=FALSE,eval=FALSE}
+df_data_old <- read.csv2(file.path(wd , 'Data', 'OldBiopsies-wholedataset.csv'),stringsAsFactors = FALSE)
+
+df_data_old <- df_data_old %>% gather(marker,value, BAX:Vimentin) %>% 
+  mutate(value = asinh(value)) %>% 
+  group_by(marker) %>%
+  mutate(value = scale(value)) %>%
+  ungroup()
+
+
+# ggplot(df_data, aes(value, color = as.character(batch))) +
+#   geom_density() +
+#   theme_bw() + facet_wrap(~marker, ncol = 7, scales = 'free') #+ scale_y_log10()
+
+
+df_data_old <- df_data_old %>%
+  mutate(value = ifelse(value > 3, 3, value),
+         value = ifelse(value < -3, -3, value))
+
+df_old_temp_plot <- df_data_old %>% mutate(fake= ifelse(predicted.celltype=='tumor',1,ifelse(predicted.celltype == "T_cells",2,3))) %>% spread(marker,value)
+df_old_temp_plot <- df_old_temp_plot %>% na.omit(Sox2, CD45 , CD3)
+
+set.seed(1234)
+tmp_sample <- df_old_temp_plot %>%  #%>% dplyr::filter(sample.id %in% c('UKK011', 'LBT293')) %>%
+  group_by(sample.id,region, predicted.celltype) %>%
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  mutate(P = log10(N)) %>% 
+  mutate(M = sum(P)) %>% 
+  mutate(S = 100000/M*P)
+  
+tmp_data_reduced <- df_old_temp_plot %>%
+  left_join(tmp_sample %>% select(sample.id,region, predicted.celltype, S)) %>% 
+  group_by(sample.id,region, predicted.celltype) %>%
+  sample_n(S, replace = TRUE) %>% 
+  ungroup() %>%
+  #distinct(CD44,CD24, Olig2,Vimentin,Nestin,GFAP,PDGFRa,CD68, CD11b, CD11c, CD3,CD15 , .keep_all = TRUE)%>% 
+  distinct(Sox2, CD3, CD45, fake, .keep_all = TRUE) %>%
+  unique()
+
+tmp_data <- tmp_data_reduced %>%
+  select(c('Sox2','CD3','CD45', 'fake')) %>% 
+  as.matrix() #%>% unique() 
+print(dim(tmp_data))
+
+library(umap)
+custom.config <- umap.defaults
+
+custom.config$metric <- 'cosine'
+custom.config$n_neighbors <- 100
+
+tmp_umap <- umap(tmp_data, custom.config)
+tmp_tsne <- Rtsne::Rtsne(tmp_data, perplexity = 20)
+tmp_pca <- prcomp(tmp_data)
+
+
+tmp_data <- tmp_data_reduced %>%
+  # as.data.frame()
+  mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+  mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+  mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) 
+write.csv2(tmp_data, file.path(wd, 'Results','DR-oldbiopsiesDataset_samples10X_fakemarkers.csv'), row.names = FALSE)
+#write.csv2(tmp_data, file.path(wd, 'Results','DR-oldbiopsiesDataset_samples10X.csv'), row.names = FALSE)
+```
+
+
+
+DR for old biopsies:
+
+```{r, redefining names of celltypes for old biopsy samples using 100000 samples for DR, echo=FALSE}
+
+tmp_data_old_DR <- read.csv2(file.path(wd, 'Results','DR-oldbiopsiesDataset_samples10X.csv'),stringsAsFactors = FALSE) %>% select(-S)
+#tmp_data_old_DR <- read.csv2(file.path(wd, 'Results','DR-oldbiopsiesDataset_samples10X_fakemarkers.csv'),stringsAsFactors = FALSE) %>% select(-S)
+
+
+tmp_data_3subtype_old_DR<- tmp_data_old_DR %>% 
+  mutate(predicted.celltype = ifelse(predicted.celltype%in%c("T_cells","myeloid cells"),predicted.celltype,"Tumor"))
+
+
+
+
+```
+
+
+Plot DR using 100000 samples for DR
+
+```{r plot DR for two samples in old biopsy data, fig.height = 4, fig.width = 6}
+
+
+tmp_plot <- tmp_data_3subtype_old_DR
+
+tmp_centroids <- tmp_plot %>% 
+  group_by(predicted.celltype) %>% 
+  summarise(PC1 = median(PC1), PC2 = median(PC2),
+            uMap1 = median(uMap1), uMap2 = median(uMap2),
+            tsne1 = median(tsne1), tsne2 = median(tsne2)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(PC1, PC2, color = predicted.celltype)) + geom_point(size=0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(PC1, PC2, color = predicted.celltype, label = predicted.celltype)) + guides(colour = guide_legend(override.aes = list(size=6)))
+ggplot(tmp_plot, aes(uMap1, uMap2, color = predicted.celltype)) + geom_point(size=0.01) + theme_bw()  + geom_label(data = tmp_centroids, aes(uMap1, uMap2, color = predicted.celltype, label = predicted.celltype)) + guides(colour = guide_legend(override.aes = list(size=6)))#+guides(color=guide_legend(override.aes = list(shape = 21, size=3)))+geom_sf(tmp_plot,aes(fill = predicted.celltype), show.legend = "point")
+ggplot(tmp_plot, aes(tsne1, tsne2, color = predicted.celltype)) + geom_point(size=0.01) + theme_bw() + geom_label(data = tmp_centroids, aes(tsne1, tsne2, color = predicted.celltype, label = predicted.celltype))
+
+```
+
+
+
+
+
+
+```{r, showing expression of markers we used for clustering old biopsy data,  fig.height =3, fig.width = 10}
+
+
+tmp_plot <- tmp_data_3subtype_old_DR %>% 
+  gather(marker, value, 'Sox2', 'CD3', 'CD68','CD45')
+
+ggplot(tmp_plot, aes(PC1, PC2, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value)) + geom_point(size= 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) #scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value)) + geom_point(size = 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradientn(colours=matlab.like(5))
+ggplot(tmp_plot, aes(tsne1, tsne2, color = value)) + geom_point(size= 0.01) + theme_bw() + facet_wrap(~marker, ncol = 7) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0)#scale_color_gradientn(colours=matlab.like(7)) #viridis::scale_color_viridis()
+
+```
+
+changing colorbar scale for 1000000 old biopsy data
+
+```{r plot DR markers,selected markers 100000 for old biopsy data,per marker, fig.height = 4, fig.width = 4}
+tmp_plot <- tmp_data_old_DR %>% 
+  gather(marker, value, c('Sox2','CD45','CD3','CD68'))
+  
+mar <- c('Sox2','CD45','CD3','CD68')
+lev <- c('0.5', '0.5', '1.5', '1')
+for (i in 1:length(lev)){
+  tmp<- tmp_plot %>% dplyr::filter(marker==mar[i])
+  # print(ggplot(tmp_plot%>% dplyr::filter(marker==i), aes(PC1, PC2, color = value)) + geom_point() + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0) +ggtitle(i))
+  print(ggplot(tmp, aes(uMap1, uMap2, color = value)) + geom_point(size = 0.01) + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'gray', high = 'firebrick', midpoint = as.numeric(lev[i])) +ggtitle(mar[i]))
+  print(ggplot(tmp, aes(tsne1, tsne2, color = value)) + geom_point(size=0.05) + theme_bw() +  scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = as.numeric(lev[i])) +ggtitle(i))
+  # 
+}
+#print(ggplot(tmp, aes(tsne1, tsne2, color = value)) + geom_point(size=0.05) + theme_bw() +  scale_color_gradientn(colours=matlab.like(7),values = c(0,0.5,1,1.5,2,2.5,3)/3) +ggtitle(i))
+```
+
+
+
+
+
+```{r, merging two datasets, echo =FALSE}
+df_data_old <- read.csv2(file.path(wd, 'Data', 'OldBiopsies-wholedataset.csv'), stringsAsFactors = FALSE)
+df_data_new <- read.csv2(file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'),stringsAsFactors = FALSE)
+df_data_old_temp <- df_data_old %>% select(sample.id:OID, predicted.celltype)
+
+df_data_new_temp <- df_data_new %>% select(sample.id:OID, predicted.celltype)
+
+df_data_all <- rbind(df_data_new_temp, df_data_old_temp)
+
+```
+
+
+putting to gther all cells in new biopsy dataset
+```{r, plots for oldbiopsy dataset, density plots, fig.width=16, fig.height=12, echo=FALSE}
+#df_data <- rbind(t,t2)
+
+plot_density_old <- df_data_old %>% gather(marker,value, BAX:Vimentin)
+
+markers <- c('CD44','CD24', 'Vimentin','Nestin', 'PDGFRa', 'GFAP','Olig2','CD68', 'CD11b', 'CD11c', 'CD3','CD15','Sox2')
+markers_2 <- c('CD68', 'CD11b', 'CD11c', 'CD3','CD15','Sox2')
+
+#df_data <- df_data %>% gather(marker,value, BAX:Vimentin)
+tmp_plot <- plot_density_old  %>% dplyr::filter(marker%in%markers & region == 'Bulk') %>%
+  mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+ggplot(tmp_plot , aes(asinh(value), color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(sample.id~marker, scales = 'free') +
+  ggtitle('markers density plots for the old dataset, bulk only')
+
+# for (i in unique(tmp_plot$marker)){
+#   print(ggplot(dplyr::filter(tmp_plot,marker==i), aes(value,col=color.id)) +
+#         geom_density() + ggtitle(i)+
+#         theme_bw())  
+# } 
+
+
+plot <- plot_density_old %>% dplyr::filter(predicted.celltype=="tumor")%>% mutate(value = asinh(value))
+tmp_plot <- plot %>% dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tumor cells in old Biopsy, bulk only, bg dplyr::filtered')
+
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% markers), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tumor cells in old Biopsy, bulk only, bg dplyr::filtered')
+
+
+
+
+plot <-  plot_density_old %>% dplyr::filter(predicted.celltype=="T_cells")%>% mutate(value = asinh(value))
+tmp_plot <- plot %>% dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tcells in old Biopsy, bulk only, bg dplyr::filtered')
+
+
+plot <-  plot_density_old %>% dplyr::filter(predicted.celltype=="myeloid cells") %>% mutate(value = asinh(value))
+tmp_plot <- plot %>%  dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","IdU","BAX","CC3")), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() + 
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('density plots for myeloid cells in old Biopsy, bulk only, bg dplyr::filtered')
+```
+putting to gther all cells in whole the biopsy dataset
+```{r, plots for  the biopsy dataset, density plots, fig.width=24, fig.height=8, echo=FALSE}
+df_data_old <- read.csv2(file.path(wd, 'Data', 'OldBiopsies-wholedataset.csv'), stringsAsFactors = FALSE)
+df_data_new <- read.csv2(file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'),stringsAsFactors = FALSE)
+
+plot_density_all <- df_data_old %>% select(intersect(colnames(df_data_old),colnames(df_data_new))) %>%  rbind(select(df_data_new,intersect(colnames(df_data_old),colnames(df_data_new)))) %>% gather(marker,value, BAX:Vimentin)
+
+markers <- c('CD44','CD24', 'Vimentin','Nestin', 'PDGFRa', 'GFAP','Olig2','CD68', 'CD11b', 'CD11c', 'CD3','CD15','Sox2')
+markers_2 <- c('CD68', 'CD11b', 'CD11c', 'CD3','CD15','Sox2')
+
+#df_data <- df_data %>% gather(marker,value, BAX:Vimentin)
+
+plot <-  plot_density_all %>% dplyr::filter(predicted.celltype=="tumor")%>% mutate(value = asinh(value))
+tmp_plot <- plot %>% dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","BAX","CC3")) %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3"))), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() +  theme(strip.text=element_text(size=15)) +
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tumor cells in the whole Biopsy, bulk only, bg dplyr::filtered')
+
+
+
+plot <-  plot_density_all %>% dplyr::filter(predicted.celltype=="T_cells")%>% mutate(value = asinh(value))
+tmp_plot <- plot %>% dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","BAX","CC3")) %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3"))), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() +  theme(strip.text=element_text(size=15)) +
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('desity plots for tcells in the whole Biopsy, bulk only, bg dplyr::filtered')
+
+
+plot <-  plot_density_all %>% dplyr::filter(predicted.celltype=="myeloid cells") %>% mutate(value = asinh(value))
+tmp_plot <- plot %>%  dplyr::filter(value>0.02&region=='Bulk') %>%mutate(color.id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_plot<- tmp_plot%>% mutate(treatment= factor(treatment, levels = c('Control','AMG232','RT')))
+
+ggplot(tmp_plot%>% dplyr::filter(marker%in% c("p21","p53","pH2AX","pATM","MDM2","BAX","CC3")) %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3"))), aes(value, color = treatment)) + 
+  # geom_histogram(breaks = 128) +
+  geom_density() +  theme(strip.text=element_text(size=15)) +
+  theme_bw() + facet_grid(marker~sample.id, scales = 'free') + ggtitle('density plots for myeloid cells in the whole Biopsy, bulk only, bg dplyr::filtered')
+```
+
+
+
+
+
+
+
+
+
+```{r, reading annotated cell population, fig.width=16, filg.height= 10, echo=FALSE}
+
+df_data_testing <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'),stringsAsFactors = FALSE)
+
+
+tmp_table <- df_data_testing %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-N,-M) %>% spread(predicted.celltype, P, fill = 0)
+
+
+tmp_plot <- tmp_table %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(ID=paste(sample.id,region,sep='_'))%>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+################################################################################################################################################################
+#barplots for control only:
+
+tmp_plot_bulk <- tmp_plot %>% dplyr::filter (region =='Bulk')
+tmp_plot_control <- tmp_plot %>% dplyr::filter(treatment=='Control'& region=='Bulk')
+
+tmp_matrix <- tmp_plot_control %>% dplyr::filter(treatment == 'Control') %>% select(-ID) %>% spread(sample.id, P)
+tmp_cells <- tmp_matrix$predicted.celltype
+tmp_matrix <- tmp_matrix  %>% select(LBT221:UKK025) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_cells
+tmp_hm <- heatmap(tmp_matrix,cexRow=1,cexCol = 1.5)
+rownames <- rownames(tmp_matrix)[tmp_hm$rowInd]
+colnames <- colnames(tmp_matrix)[tmp_hm$colInd]
+
+tmp_plot_bulk <- tmp_plot_bulk %>% 
+  mutate(predicted.celltype = factor(predicted.celltype, levels = rownames)) %>% 
+  mutate(sample.id = factor(sample.id, levels = colnames))
+
+ggplot(tmp_plot_bulk, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+c('LBT293_RT', 'UKK011_RT', 'UKK011_AMG232' , 'LBT247_RT' , 'LBT231_AMG232' , 'LBT242_AMG232', 'LBT379_AMG232')
+
+
+tmp_plot_bulk <- tmp_plot_bulk %>%mutate(ID2 = paste(sample.id , treatment , sep = '_')) %>%  mutate(significant_fill = ifelse(ID2 %in% c('LBT293_RT', 'UKK011_RT', 'LBT247_RT') , 'blue' , ifelse(ID2 %in% c('UKK011_AMG232' , 'LBT231_AMG232' , 'LBT242_AMG232', 'LBT379_AMG232'), 'green' , 'white')))
+ggplot(tmp_plot_bulk, aes(treatment, P, col = treatment)) + geom_col(data = tmp_plot_bulk, position = 'dodge', aes(fill = significant_fill)) + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ scale_fill_manual(values = c("white"='#FFFFFF', "green"='#00BA38', 'blue' = '#619CFF'), guide='none')
+
+tiff(file.path(wd,  'Results', 'tumor_barplots_bulk.tiff'),units="cm",height = 30, width=50,res=600)
+ggplot(tmp_plot_bulk, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+#############two samples########################################################################################################################
+
+tmp_plot_2 <- tmp_plot %>% dplyr::filter (sample.id %in% c('LBT231','LBT240'))
+
+tmp_plot_2 <- tmp_plot_2 %>% 
+  mutate(predicted.celltype = factor(predicted.celltype, levels = rownames))
+
+
+tiff(file.path(wd,  'Results', 'tumor_barplots_twoSamples.tiff'),units="cm",height = 25, width=20,res=600)
+ggplot(tmp_plot_2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~ID, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+temp_DR<- read.csv2(file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv'), stringsAsFactors = FALSE)
+tumor_old <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'),stringsAsFactors = FALSE)
+New_barplot_F <- tumor_old %>% left_join(temp_DR %>% select(-predicted.celltype)) %>% na.omit(c('p53','p21','MDM2'))
+
+
+
+tmp_amg <- New_barplot_F %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232')) %>% 
+  select(sample.id:OID,predicted.celltype, p53, p21,MDM2)
+
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53,'_MDM2',MDM2 )) %>% 
+  mutate(Sample = paste(sample.id, region, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID,tmp_amg$predicted.celltype) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg %>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID', 'predicted.celltype')]) %>% as.data.frame() %>% group_by(Sample,predicted.celltype) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+#temp_table <- tmp_table %>% separate(Sample,'smaple.id', 'region', 'treatment',sep='_')
+p<- ggplot(tmp_table, aes(fill=ID, y=Freq, x=Sample)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.text.x = element_text(angle = 90))+
+  #scale_x_reverse()+
+  facet_grid(predicted.celltype~.)
+
+
+
+print(p)
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+```{r, barplots for tumor cells, fig.height = 12 , fig.width = 8 , echo=FALSE }
+
+tumor_old <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'),stringsAsFactors = FALSE)
+
+
+tmp_table_tumor <- tumor_old %>% dplyr::filter(treatment == 'Control')
+
+tmp_table_tumor <- tmp_table_tumor %>% group_by(sample.id, region, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% mutate(ID = paste(sample.id, region, sep = "_"))
+
+ggplot(tmp_table_tumor , aes(y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~predicted.celltype, ncol = 1, strip.position="right")+ 
+  ylab("Relative Cell Proportion (%)")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+
+tmp_matrix <- tmp_table_tumor %>% select(ID, predicted.celltype,P) %>% spread(ID, P)
+tmp_cells <- tmp_matrix$predicted.celltype
+tmp_matrix <- tmp_matrix  %>% select(LBT221_Bulk:UKK025_Bulk) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_cells
+tmp_hm <- heatmap(tmp_matrix,cexRow = 1,cexCol = 1.5)
+rownames <- rownames(tmp_matrix)[tmp_hm$rowInd]
+colnames <- colnames(tmp_matrix)[tmp_hm$colInd]
+
+tmp_table_tumor <- tmp_table_tumor %>% 
+  mutate(predicted.celltype = factor(predicted.celltype, levels = rownames)) %>% 
+  mutate(ID = factor(ID, levels = colnames))
+
+#ggplot(tmp_table_tumor, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(tmp_table_tumor , aes(y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~predicted.celltype, ncol = 1, strip.position="right")+ 
+  ylab("Relative Cell Proportion (%)")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+```
+
+
+
+Plots for G0G1:
+```{r, G0G1 graphs, fig.width=3,fig.height=4, echo=FALSE}
+
+df_g0g1<- read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations.csv'), stringsAsFactors = FALSE)
+
+df_annotated <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'), stringsAsFactors = FALSE)
+
+df_temp <- df_annotated %>% left_join(df_g0g1)
+df_data_G0G1 <- df_temp %>% dplyr::filter(cell_cycle_phase=='G0G1')
+
+
+tmp_table_cellcycel_tumorsub <- df_temp %>% dplyr::filter(treatment=='Control') %>% group_by(cell_cycle_phase, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(cell_cycle_phase) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1','M','G2','S')))
+
+
+
+tmp_matrix <- tmp_table_cellcycel_tumorsub %>% select(cell_cycle_phase, predicted.celltype,P) %>% spread(cell_cycle_phase, P)
+tmp_cells <- tmp_matrix$predicted.celltype
+tmp_matrix <- tmp_matrix  %>% select(G0G1:S) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_cells
+tmp_hm <- heatmap(tmp_matrix,cexRow = 1,cexCol = 1.5)
+library("colorspace")
+q4 <- sequential_hcl(4, palette = 'Heat')
+q4[4] <- 'forestgreen'
+
+
+
+
+tmp_table_cellcycle <- df_g0g1 %>% group_by(sample.id , region , treatment, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% 
+  group_by(sample.id , region , treatment) %>% mutate(M=sum(N)) %>% ungroup() %>% 
+  mutate(P= round(100*N/M,2)) %>% select(-N,-M) %>% spread(cell_cycle_phase,P,fill=0)
+
+
+tmp_plot_cellcycle <- tmp_table_cellcycle %>% gather(cell_cycle_phase, P, G0G1:S) %>% mutate(ID=paste(sample.id,region,sep='_'))%>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')),cell_cycle_phase = factor(cell_cycle_phase,levels = c('G0G1','S','G2','M')) ) 
+
+ggplot(tmp_plot_cellcycle , aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(cell_cycle_phase~ID,scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+scale_color_manual(values = q4)
+
+
+
+
+
+
+
+```
+```{r, new barplots, fig.width=6,fig.height=6, echo=FALSE}
+
+df_g0g1<- read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations.csv'), stringsAsFactors = FALSE)
+
+df_nontumor <-read.csv2(file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'),stringsAsFactors = FALSE)
+
+df_temp <- df_nontumor %>% left_join(df_g0g1) %>% na.omit(cell_cycle_phase)
+temp <- df_temp
+
+library("colorspace")
+q4 <- sequential_hcl(4, palette = 'Heat')
+q4[4] <- 'forestgreen'
+
+tmp_table_newbar <- temp %>% dplyr::filter(predicted.celltype=="T_cells") %>% group_by(treatment, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% 
+  group_by(treatment) %>% mutate(M=sum(N)) %>% ungroup() %>% 
+  mutate(P= round(100*N/M,2)) %>% select(-N,-M) #%>% spread(cell_cycle_phase,P,fill=0)
+
+
+p <- ggplot(tmp_table_newbar %>% mutate(treatment = factor(treatment, c('Control','AMG232','RT'))) , aes(treatment, P, fill = cell_cycle_phase)) + geom_bar(position="stack", stat="identity") +  theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ggtitle('cell cylce phase for Tcells in the new biopsy')+scale_fill_manual(values = c( "G0G1" = '#BDBDBD', 'S'='#A1D99B',"G2"='#006D2C','M' = '#252525'))
+
+png(file.path(wd, 'paper_figures', 'relative proportions of cell cycle in Tcells.png'), width = 6, height = 4, units = 'in', res = 300)
+print(p)
+dev.off()
+
+tmp_table_newbar <- temp %>% dplyr::filter(predicted.celltype=="myeloid cells") %>% group_by(treatment, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% 
+  group_by(treatment) %>% mutate(M=sum(N)) %>% ungroup() %>% 
+  mutate(P= round(100*N/M,2)) %>% select(-N,-M) #%>% spread(cell_cycle_phase,P,fill=0)
+
+
+
+p<- ggplot(tmp_table_newbar %>% mutate(treatment = factor(treatment, c('Control','AMG232','RT'))) , aes(treatment, P, fill = cell_cycle_phase)) + geom_bar(position="stack", stat="identity") +  theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ggtitle('cell cylce phase for Tcells in the new biopsy')+scale_fill_manual(values = c( "G0G1" = '#BDBDBD', 'S'='#A1D99B',"G2"='#006D2C','M' = '#252525'))
+
+png(file.path(wd, 'paper_figures', 'relative proportions of cell cycle in Myeloid cells.png'), width = 6, height = 4, units = 'in', res = 300)
+print(p)
+dev.off()
+
+tmp_table_newbar <- temp %>% dplyr::filter(predicted.celltype=="T_cells") %>% mutate(ID = paste(sample.id,region,sep='_'))%>% group_by(ID ,treatment, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% 
+  group_by(ID,treatment) %>% mutate(M=sum(N)) %>% ungroup() %>% 
+  mutate(P= round(100*N/M,2)) %>% select(-N,-M) #%>% spread(cell_cycle_phase,P,fill=0)
+
+ggplot(tmp_table_newbar , aes(treatment, P, fill = cell_cycle_phase)) + geom_bar(position="stack", stat="identity") + facet_wrap(~ID)+  theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+scale_color_manual(values = q4)+ggtitle('cell cylce phase for Tcells in the new biopsy')
+
+
+tmp_table_newbar <- temp %>% dplyr::filter(predicted.celltype=="myeloid cells" ) %>% mutate(ID = paste(sample.id,region,sep='_'))%>% group_by(ID ,treatment, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% 
+  group_by(ID,treatment) %>% mutate(M=sum(N)) %>% ungroup() %>% 
+  mutate(P= round(100*N/M,2)) %>% select(-N,-M) #%>% spread(cell_cycle_phase,P,fill=0)
+
+ggplot(tmp_table_newbar , aes(treatment, P, fill = cell_cycle_phase)) + geom_bar(position="stack", stat="identity") +  theme_bw() + facet_wrap(~ID)+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+scale_color_manual(values = q4)+ggtitle('cell cylce phase for myeloids in the new biopsy')
+
+
++scale_fill_manual(values = c( "G0G1" = '#BDBDBD', 'S'='#A1D99B',"G2"='#006D2C','M' = '#252525'))
+```
+
+
+
+
+
+
+
+
+
+
+```{r,nothing}
+
+# df_tmp <- df_data_G0G1  %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N= n()) %>% ungroup() %>% spread(predicted.celltype, N, fill = 0)
+
+# tmp_table <- table(df_data_G0G1$predicted.celltype) %>% as.data.frame() %>% mutate(Freq = Freq) %>%mutate(P = 100*Freq/sum(Freq)) %>% arrange(-P)
+# DT::datatable(tmp_table)
+
+
+tmp_table_G0G1 <- df_data_G0G1 %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-N,-M) %>% spread(predicted.celltype, P, fill = 0)
+
+
+tmp_plot_G0G1 <- tmp_table_G0G1 %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(ID=paste(sample.id,region,sep='_'))%>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+
+####################################################################################################
+#barplots for control only:
+
+tmp_plot_bulk_G0G1 <- tmp_plot_G0G1 %>% dplyr::filter (region =='Bulk')
+tmp_plot_control_G0G1 <- tmp_plot_G0G1 %>% dplyr::filter(treatment=='Control'& region=='Bulk')
+
+# tmp_matrix <- tmp_plot_control %>% dplyr::filter(treatment == 'Control') %>% select(-ID) %>% spread(sample.id, P)
+# tmp_cells <- tmp_matrix$predicted.celltype
+# tmp_matrix <- tmp_matrix  %>% select(LBT221:UKK025) %>% as.matrix()
+# rownames(tmp_matrix) <- tmp_cells
+# tmp_hm <- heatmap(tmp_matrix)
+
+# tmp_plot_bulk_G0G1 <- tmp_plot_bulk_G0G1 %>% 
+#   mutate(predicted.celltype = factor(predicted.celltype, levels = rownames)) %>% 
+#   mutate(sample.id = factor(sample.id, levels = colnames))
+
+ggplot(tmp_plot_bulk_G0G1, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+#ggsave(path = file.path(wd,  'Results', 'tumor_barplots_bulk'), width = 100, height = 100, device='tiff', dpi=700)
+
+tiff(file.path(wd,  'Results', 'tumor_barplots_bulk_G0G1.tiff'),units="cm",height = 30, width=50,res=600)
+ggplot(tmp_plot_bulk_G0G1, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+#############two samples########################################################################################################################
+# 
+# tmp_plot_2_G0G1 <- tmp_plot_G0G1 %>% dplyr::filter (sample.id %in% c('LBT231','LBT240'))
+# 
+# tmp_plot_2_G0G1 <- tmp_plot_2_G0G1 %>% 
+#   mutate(predicted.celltype = factor(predicted.celltype, levels = rownames))
+# 
+# 
+# tiff(file.path(wd,  'Results', 'tumor_barplots_twoSamples_G0G1.tiff'),units="cm",height = 25, width=20,res=600)
+# ggplot(tmp_plot_2_G0G1, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~ID, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+# dev.off()
+# 
+# 
+# # ggplot(tmp_plot_2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+# 
+# 
+# 
+# 
+# tmp_plot_bulk$ID <- factor(tmp_plot_bulk$ID,      # Reordering group factor levels
+#                          levels = c("UKK011_Bulk", "LBT239_Bulk","LBT240_Bulk", "LBT242_Bulk", "UKK012_Bulk", "UKK025_Bulk","LBT379_Bulk", "LBT399_Bulk", "UKK023_Bulk", "LBT250_Bulk" , "LBT273_Bulk","LBT221_Bulk","LBT231_Bulk","LBT252_Bulk","LBT268_Bulk","LBT293_Bulk","UKK021_Bulk","LBT247_Bulk"))
+# 
+# ##################################################################################################################################
+# 
+# # tmp_plot2$sample.id <- factor(tmp_plot$sample.id,      # Reordering group factor levels
+# #                          levels = c("UKK011", "LBT239","LBT240", "LBT242", "UKK012", "UKK025","LBT379", "LBT399", "UKK023", "LBT250" , "LBT273","LBT221","LBT231","LBT252","LBT268","LBT293","UKK021","LBT247"))
+# 
+
+
+
+# DT::datatable(tmp_table, dplyr::filter = 'top')
+# write.csv2(tmp_table, file.path(wd, 'Results', 'cellular_composition_Sox2P_G0G1.csv'), row.names = FALSE)
+```
+
+
+
+
+
+
+bar plots for the new biopsy dataset
+
+```{r, barplots, echo=FALSE ,fig.width=16,fig.height=10,echo=FALSE, eval =FALSE}
+
+df_data_old <- read.csv2(file.path(wd, 'Data', 'OldBiopsies-wholedataset.csv'), stringsAsFactors = FALSE)
+df_data_new <- read.csv2(file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'),stringsAsFactors = FALSE)
+tmp_table_data <- df_data_new %>% 
+  mutate(predicted.celltype = ifelse(predicted.celltype%in%c("T_cells","myeloid cells"),predicted.celltype,"Tumor")) %>% select(sample.id:OID,predicted.celltype)
+
+tmp_table_data2 <- df_data_old %>% 
+  mutate(predicted.celltype = ifelse(predicted.celltype%in%c("T_cells","myeloid cells"),predicted.celltype,"Tumor")) %>% select(sample.id:OID,predicted.celltype)
+
+tmp_table_new <- tmp_table_data %>% rbind(tmp_table_data2)
+
+tmp_table <- tmp_table_new %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2))# %>% select(-M, -N)# %>% spread(predicted.celltype, P, fill = 0)
+tmp_table <- tmp_table %>% mutate(treatment = factor(treatment,levels=c('Control','AMG232','RT')))
+
+# ggplot(tmp_table %>% dplyr::filter(region=='Bulk'), aes(fill=predicted.celltype, y=P, x=treatment)) + 
+#     geom_bar(position="stack", stat="identity") +
+#   facet_wrap(~sample.id)+ 
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+tmp_table <- tmp_table %>% mutate(predicted.celltype = ifelse(predicted.celltype=='myeloid cells','Myeloid',ifelse(predicted.celltype=='T_cells','T-cell',predicted.celltype)))
+
+p<- ggplot(tmp_table %>% dplyr::filter(treatment=='Control') %>% mutate(ID=paste(sample.id, region, sep = '_')), aes(fill=predicted.celltype, y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw()+
+  facet_wrap(~treatment)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=15))+ggtitle('relative proportions for Only control samples')+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for Only control samples.png'), width = 10, height = 7, units = 'in', res = 300)
+print(p)
+dev.off()
+
+# ggplot(tmp_table %>% dplyr::filter(region=='Bulk'), aes(fill=predicted.celltype, y=N, x=treatment)) + 
+#     geom_bar(position="stack", stat="identity") +
+#   facet_wrap(~sample.id)+ 
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+p<-ggplot(tmp_table %>% dplyr::filter(treatment=='Control') %>% mutate(ID=paste(sample.id, region, sep = '_')), aes(fill=predicted.celltype, y=N, x=ID)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw()+
+  facet_wrap(~treatment)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=15))+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'quantities for Only control samples.png'), width = 10, height = 7, units = 'in', res = 300)
+print(p)
+dev.off()
+
+p <- ggplot(tmp_table %>% dplyr::filter(treatment=='AMG232') %>% mutate(ID=paste(sample.id, region, sep = '_')), aes(fill=predicted.celltype, y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw()+
+  facet_wrap(~treatment)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=15))+ggtitle('relative proportions for Only AMG samples')+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for Only AMG samples.png'), width = 10, height = 7, units = 'in', res = 300)
+print(p)
+dev.off()
+
+p<-ggplot(tmp_table %>% dplyr::filter(treatment=='RT') %>% mutate(ID=paste(sample.id, region, sep = '_')), aes(fill=predicted.celltype, y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw()+
+  facet_wrap(~treatment)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=15))+ggtitle('relative proportions for Only control samples')+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for Only RT samples.png'), width = 10, height = 7, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+
+p<- ggplot(tmp_table %>% group_by(sample.id) %>% mutate(ID=paste(region,treatment, sep = '_')) %>% ungroup() %>% mutate(ID=factor(ID,levels=c('Bulk_Control','Bulk_AMG232','Bulk_RT','Inv_Control','Inv_AMG232','Inv_RT'))), aes(fill=predicted.celltype, y=N, x=ID)) + 
+    geom_bar(position="stack", stat="identity") + theme_bw()+
+  facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=15))+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(axis.text.y = element_text(size = 10))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for bulk vs inv.png'), width = 10, height = 7, units = 'in', res = 300)
+print(p)
+dev.off()
+
+ggplot(tmp_table %>% group_by(sample.id) %>% mutate(ID=paste(region,treatment, sep = '_')) %>% ungroup()%>% mutate(ID=factor(ID,levels=c('Bulk_Control','Bulk_AMG232','Bulk_RT','Inv_Control','Inv_AMG232','Inv_RT'))), aes(fill=predicted.celltype, y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +theme_bw()+
+  facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=21))+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(axis.text.y = element_text(size = 10))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for bulk vs inv2.png'), width = 10, height = 7, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+ggplot(tmp_table %>% group_by(sample.id) %>% mutate(ID=paste(region,treatment, sep = '_')) %>% ungroup(), aes(fill=predicted.celltype, y=N, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=25))
+
+p<- ggplot(tmp_table %>% group_by(sample.id) %>% mutate(ID=paste(region,treatment, sep = '_')) %>% ungroup(), aes(fill=predicted.celltype, y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~sample.id)+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=15))+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(axis.text.y = element_text(size = 10))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for samples.png'), width = 10, height = 7, units = 'in', res = 300)
+print(p)
+dev.off()
+
+p<- ggplot(tmp_table %>% dplyr::filter(sample.id%in%c('LBT127','LBT145','LBT231', 'LBT240','NIK001'))%>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=N, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_grid(sample.id~region)+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size =15))+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(axis.text.y = element_text(size = 10))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for special samples.png'), width = 7, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+ggplot(tmp_table %>% dplyr::filter(sample.id%in%c('LBT127','LBT145','LBT231', 'LBT240','NIK001'))%>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=P, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_grid(sample.id~region)+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,size=15))+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(axis.text.y = element_text(size = 10))+
+  theme(legend.text = element_text(size=15))
+
+png(file.path(wd, 'paper_figures', 'relative proportions for special samples2.png'), width = 7, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+```
+```{r, barplots for whole dataset, old and new biopsies, echo=FALSE}
+
+
+#####################################################################################################
+
+
+
+
+```
+
+barplots cell proportions for old biopsy
+
+```{r, barplots cell proportions for old biopsy, echo=FALSE , eval =FALSE}
+
+
+tmp_table_data <- df_data_old %>% select(sample.id:OID, predicted.celltype) %>% 
+  mutate(predicted.celltype = ifelse(predicted.celltype%in%c("T_cells","myeloid cells"),predicted.celltype,"Tumor"))
+
+
+
+tmp_table <- tmp_table_data %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2))# %>% select(-M, -N)# %>% spread(predicted.celltype, P, fill = 0)
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk'), aes(fill=predicted.celltype, y=P, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk') %>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  #facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk'), aes(fill=predicted.celltype, y=N, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk') %>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=N, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  #facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(sample.id%in%c('LBT127', 'LBT145','NIK001'))%>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=N, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_grid(sample.id~region)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(sample.id%in%c('LBT127', 'LBT145','NIK001'))%>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=P, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_grid(sample.id~region)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+```
+
+
+
+
+
+barplots cell proportions for the whole dataset
+
+```{r, barplots cell proportions for the whole dataset, fig.width=12,fig.height = 8, echo=FALSE , eval =FALSE}
+
+
+tmp_table_data <- df_data_all %>% select(sample.id:OID, predicted.celltype) %>% 
+  mutate(predicted.celltype = ifelse(predicted.celltype%in%c("T_cells","myeloid cells"),predicted.celltype,"Tumor"))
+
+
+
+tmp_table <- tmp_table_data %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2))# %>% select(-M, -N)# %>% spread(predicted.celltype, P, fill = 0)
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk'), aes(fill=predicted.celltype, y=P, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk') %>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=P, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  #facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk'), aes(fill=predicted.celltype, y=N, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(region=='Bulk') %>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=N, x=ID)) + 
+    geom_bar(position="stack", stat="identity") +
+  #facet_wrap(~sample.id)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(sample.id%in%c('LBT231', 'LBT240', 'LBT145'))%>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=N, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_grid(sample.id~region)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+ggplot(tmp_table %>% dplyr::filter(sample.id%in%c('LBT231', 'LBT240', 'LBT145'))%>% mutate(ID=paste(sample.id, treatment, sep = '_')), aes(fill=predicted.celltype, y=P, x=treatment)) + 
+    geom_bar(position="stack", stat="identity") +
+  facet_grid(sample.id~region)+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+```
+
+
+
+```{r, drug response for Tumor population all dataset, echo =FALSE}
+df_data_old <- read.csv2(file.path(wd, 'Data', 'OldBiopsies-wholedataset.csv'), stringsAsFactors = FALSE)
+df_data_new <- read.csv2(file.path(wd, 'Data', 'Sox2P-CD45P-wholedataset.csv'),stringsAsFactors = FALSE)
+Markers <- c('p53', 'p21', 'MDM2', 'CC3', 'BAX','pH2AX','pATM')
+
+df_data_new_temp <- df_data_new %>% select(sample.id:OID, Markers, predicted.celltype)
+df_data_old_temp <- df_data_old %>% select(sample.id:OID, Markers, predicted.celltype)
+
+df_data_drug <- rbind(df_data_new_temp,df_data_old_temp)
+
+
+df_data_filtered <- df_data_drug %>% 
+  dplyr::filter(label!='BC') %>% 
+  dplyr::filter(!predicted.celltype%in%c("T_cells","myeloid cells")) %>% 
+  na.omit(p53, p21, MDM2, CC3, BAX,pH2AX,pATM) %>% 
+  gather(marker,value, Markers) %>% 
+  mutate(value=asinh(value)) %>% 
+  dplyr::filter(treatment%in%c('Control','RT','AMG232'),marker%in%Markers) %>% 
+  #dplyr::filter(value>0) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) %>% 
+  mutate(ID = paste(sample.id , region, sep ='_'))
+
+df_filtered <- df_data_filtered
+
+```
+
+
+
+
+
+Density plots
+
+```{r density plot per marker2, fig.height =6, fig.width = 22, echo=FALSE}
+
+tmp_plot <- df_filtered %>%# gather(marker,value, BAX:Vimentin) %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # dplyr::filter(sample.id != 'LBT005') %>% 
+  dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+ggplot(tmp_plot %>% dplyr::filter(region == 'Bulk', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(tmp_plot %>% dplyr::filter(region=='Bulk',treatment == 'Control', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+ggplot(tmp_plot %>% dplyr::filter(marker == 'p53', treatment == 'Control', region=='Bulk', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  # geom_density() +
+  geom_freqpoly() + 
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  # facet_grid(marker~sample.id, scales = 'free') + 
+  facet_wrap(~sample.id) +
+  scale_y_log10() +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+Deconvolve the control distribution in 2 gaussians using GMM
+
+First decide which gaussians need to be separated
+
+```{r GMM criterion,echo=FALSE, eval=FALSE}
+
+tmp_rank <- tmp_plot %>% dplyr::filter(marker == 'p53', treatment == 'Control') %>% group_by(ID) %>% summarise(M = mean(value), S = sd(value)) %>% ungroup() %>% mutate(CV = S/M) %>% mutate(rank.CV = rank(CV), rank.S = rank(S)) %>% arrange(rank.CV) %>% mutate(ID = factor(ID, levels = ID))
+
+ggplot(tmp_rank, aes(ID, S)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(tmp_rank, aes(rank.S, S)) + geom_point() + theme_bw()
+ggplot(tmp_rank, aes(ID, CV)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(tmp_rank, aes(rank.CV, CV)) + geom_point() + theme_bw()
+
+```
+
+```{r GMM, fig.height = 5, fig.width = 12,echo=FALSE}
+
+library(mixtools)
+df_data<-df_data_filtered %>% mutate(ID = paste(sample.id , region, sep = '_'))
+df_gmm <- data.frame()
+for(i in unique(df_data$ID)){
+  print(i)
+  # for(j in unique(df_data$marker)){
+  for(j in c('p53', 'p21', 'MDM2', 'CC3', 'BAX','pH2AX','pATM')){
+    if (i=='UKK011_Bulk'&j=='p53'){
+      tmp_data <- df_data %>% dplyr::filter(ID == i, marker == j, treatment == 'Control', value > 0.5)
+    }
+    else{
+    tmp_data <- df_data %>% dplyr::filter(ID == i, marker == j, treatment == 'Control', value > 0)
+    }#%>% 
+    tmp_gmm <- normalmixEM(tmp_data$value)
+    df_gmm <- df_gmm %>% bind_rows(data.frame(ID = i, marker = j, mu = c(tmp_gmm$mu[1], tmp_gmm$mu[2]), sigma = c(tmp_gmm$sigma[1], tmp_gmm$sigma[2]), G = c('gaussian01', 'gaussian02')))
+  }
+}
+
+df_gmm <- df_gmm %>% mutate(Q95 = qnorm(0.05, mu, sigma, lower.tail = FALSE))
+df_gmm <- df_gmm %>% group_by(ID, marker) %>% dplyr::filter(mu == min(mu)) %>% ungroup()
+df_dummy_data <- data.frame()
+
+for(i in unique(df_gmm$ID)){
+  tmp_gmm <- df_gmm %>% dplyr::filter(ID == i)
+  tmp_dummy_data <- rnorm(1e4, tmp_gmm$mu, tmp_gmm$sigma)
+  df_dummy_data <- df_dummy_data %>% bind_rows(data.frame(ID = i, value = tmp_dummy_data))
+}
+
+```
+
+For every cell/marker, we calculate the probability of belonging to the control distribution. Two tails: P(value>red) P(value<red)
+
+```{r pvalues tumors, echo=FALSE}
+
+tmp_data <- df_data %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # dplyr::filter(sample.id != 'LBT005') %>% 
+  group_by(marker, sample.id, region, label, batch) %>% 
+  mutate(M = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         S = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         p.high = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = FALSE),
+         p.low = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = TRUE)) %>% 
+  ungroup()
+
+# ggplot(tmp_data, aes(p.high, fill = treatment), alpha = 0.2) + geom_density() + theme_bw() + facet_grid(sample.id ~ marker, scales = 'free')
+plot(density(tmp_data$p.high))
+plot(density(tmp_data$p.low))
+
+```
+The distribution of p-values looks more or less uniform -> good QC.
+
+We define as induction for a marker those cells with a p-value < 0.025 for either tail. p-low < 0.025 (-1), p.high < 0.025 (+1), else 0.
+
+```{r dichotomize induction,fig.width=24, fig.height=8 , echo=FALSE}
+tmp_data <- df_data %>% dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'CC3', 'BAX','pH2AX','pATM'))
+
+# tmp_data <- tmp_data %>%
+#   mutate(group = ifelse(p.high < 0.05, 1, 0))
+
+tmp_data <- tmp_data %>% 
+  left_join(df_gmm) %>% 
+  mutate(group = ifelse(value > Q95, 1, 0))
+
+tmp_data <- tmp_data %>%
+  #mutate(group = ifelse(is.na(group2), group, group2)) %>%
+  select(sample.id:group)
+
+tmp_plot <- tmp_data %>% 
+  # dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX')) %>% 
+  dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+tmp_cutoffs <- tmp_plot %>% 
+  dplyr::filter(treatment == 'Control') %>% 
+  dplyr::filter(group == 1) %>% 
+  group_by(ID, marker) %>% 
+  summarise(value = min(value)) %>% 
+  ungroup()
+
+tmp_plot <- tmp_plot%>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+tmp_cutoffs <- tmp_cutoffs %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+ggplot(tmp_plot%>% dplyr::filter(value>0)  , aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_cutoffs, aes(xintercept = value), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~ID, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(strip.text = element_text(size = 9))
+  
+
+
+
+```
+
+
+
+We define as induction for a marker those cells with a value < cut-off found based on 95% of first normal distribution obtained by GMM.
+
+Drugresponse for AMG:
+
+```{r, Drugresponse for AMG, fig.height = 16 , fig.width=12,echo=FALSE}
+
+
+temp <- tmp_data %>% select(sample.id:marker,group) 
+
+temp <- temp %>% spread(marker, group)
+write.csv2(temp , file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv'), row.names=FALSE)
+temp <- read.csv2(file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv'), stringsAsFactors = FALSE)
+
+tmp_amg <- temp %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232')) %>% 
+  select(sample.id:OID, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53,'_MDM2',MDM2 )) %>% 
+  mutate(Sample = paste(sample.id, region, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  scale_x_reverse()
+
+
+print(p)
+
+
+order <- tmp_table %>% spread(ID,Freq) %>% separate(Sample,c('sample.id','region','treatment'),sep='_') %>% dplyr::filter(region=='Bulk',treatment=='Control')
+order <- order %>% select(-c('region','treatment'))
+
+tmp_samples <- order$sample.id
+tmp_matrix <- order  %>% select(-sample.id) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_samples
+tmp_hm <- heatmap(tmp_matrix,cexRow=1,cexCol = 1.5)
+rownames <- rownames(tmp_matrix)[tmp_hm$rowInd]
+colnames <- colnames(tmp_matrix)[tmp_hm$colInd]
+
+
+
+tmp <- tmp_table %>% separate(Sample,c('sample.id','region','treatment'),sep = '_') %>% dplyr::filter(sample.id!='LBT250') %>% mutate(ref = paste(region,treatment,sep='_')) %>% mutate(sample.id = factor(sample.id,levels=rownames))
+t <- tmp$sample.id
+Markers<-t[!t%in% rownames]
+
+
+p<- ggplot(tmp, aes(fill=ID, y=ref, x=Freq)) + 
+  facet_grid(sample.id~.)+
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=15))+
+  scale_x_reverse()
+
+
+print(p)
+
+
+
+
+
+
+
+
+
+
+#print(i)
+
+one <- brewer.pal( n=11,name = "YlOrRd")
+two <- brewer.pal( n=11,name = "YlGnBu")
+#plots for two samples:
+
+tmp_amg_two <- tmp_amg %>% dplyr::filter(sample.id %in% c('LBT231', 'LBT240', 'LBT145')) #%>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+
+tmp_table <- table(tmp_amg_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup() %>% separate(Sample,c('sample.id','region','treatment'),sep='_') %>% mutate(ref = paste(region,treatment,sep='_')) %>% mutate(sample.id = factor(sample.id , levels = c('LBT240','LBT231','LBT145')))
+#tmp_table %>% spread(Sample, Freq)
+ 
+
+p<- ggplot(tmp_table, aes(fill=ID, y=ref, x=Freq)) +
+      geom_bar(position="stack", stat="identity",width = 0.7)+
+  facet_grid(.~sample.id)+
+  ggtitle("AMG")+
+  scale_fill_manual(values=colors2) +
+    theme(axis.text = element_text(size = 25))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=20))+
+  theme(strip.text.y = element_text(size = 20))+
+  scale_x_reverse()
+#
+print(p)
+
+
+
+```
+dividing the plots to main and supplementary for the paper:
+
+Drugresponse for AMG:
+
+```{r, Drugresponse for AMG edited for the paper, fig.height = 16 , fig.width=12,echo=FALSE}
+
+temp <- read.csv2(file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv'), stringsAsFactors = FALSE)
+main <- c('LBT213','LBT252','LBT145', 'LBT127', 'LBT247','LBT143','UKK011', 'LBT240', 'LBT125','LBT221','LBT135')
+tmp_amg <- temp %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232'), sample.id%in%main) %>% 
+  select(sample.id:OID, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53,'_MDM2',MDM2 )) %>% 
+  mutate(Sample = paste(sample.id, region, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg %>% dplyr::filter(region =='Bulk')
+ samples <- tmp_amg %>% select(sample.id,Sample) %>% unique()
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+
+tmp_table <- tmp_table %>% left_join(samples) %>% separate(Sample, c('sample.id', 'region','treatment'), sep = '_') %>% mutate(New = paste(region,treatment, sep = '_'))
+
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+p<- ggplot(tmp_table %>% dplyr::filter(!sample.id%in%c('LBT145','LBT240')), aes(fill=ID, y=New, x=Freq)) + 
+     geom_bar(position="stack", stat="identity",width = 0.8)+
+  ggtitle("AMG and Control")+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))+
+  scale_fill_manual(values=colors2)+
+  scale_x_reverse()+facet_grid(sample.id~.)
+
+
+print(p)
+#print(i)
+
+one <- brewer.pal( n=11,name = "YlOrRd")
+two <- brewer.pal( n=11,name = "YlGnBu")
+#plots for two samples:
+
+tmp_amg_two <- tmp_amg %>% dplyr::filter(sample.id %in% c('LBT231', 'LBT240', 'LBT145')) #%>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+
+tmp_table <- table(tmp_amg_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+ 
+
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+      geom_bar(position="stack", stat="identity",width = 0.8)+
+  ggtitle("AMG")+
+  scale_fill_manual(values=colors2) +
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+#
+print(p)
+
+```
+Drugresponse for AMG without Control:
+
+```{r, Drugresponse for AMG without Control, fig.height = 16 , fig.width=12,echo=FALSE}
+
+
+temp <- tmp_data %>% select(sample.id:marker,group) 
+
+temp <- temp %>% spread(marker, group)
+write.csv2(file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv', row_names=FALSE))
+
+
+tmp_amg <- temp %>% 
+  dplyr::filter(treatment %in% c('AMG232')) %>% 
+  select(sample.id:OID, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53, '_MDM2',MDM2)) %>% 
+  mutate(Sample = paste(sample.id, region, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=15))+
+  scale_x_reverse()
+
+print(p)
+#print(i)
+
+
+#plots for two samples:
+
+tmp_amg_two <- tmp_amg %>% dplyr::filter(sample.id %in% c('LBT231', 'LBT240', 'LBT145')) #%>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+
+tmp_table <- table(tmp_amg_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+ 
+
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+      geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+#
+print(p)
+
+```
+
+
+Drugresponse for RT:
+
+```{r, DR for RT,echo=FALSE}
+RT_samples <- temp %>% dplyr::filter(treatment=='RT') %>% select(sample.id , region) %>% unique()
+tmp_rt<- temp%>% 
+  dplyr::filter(sample.id %in% RT_samples$sample.id) %>% 
+  dplyr::filter(treatment %in% c('Control', 'RT')) %>% 
+  select(sample.id:OID, p53, p21, pH2AX)  
+
+
+tmp_rt <- tmp_rt %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         pH2AX = plyr::mapvalues(pH2AX, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21,'_p53', p53, '_pH2AX',pH2AX)) %>%
+  mutate(Sample = paste(sample.id, region, treatment, sep = '_'))
+
+
+
+table(tmp_rt$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+#making plots for Bulk samples:
+ tmp_rt_Bulk <- tmp_rt %>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_rt_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+
+print(p)
+print(i)
+
+
+#plots for two samples:
+
+tmp_rt_two <- tmp_rt %>% dplyr::filter(sample.id %in% c('LBT231'))# %>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+# 
+tmp_table <- table(tmp_rt_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+# 
+# 
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+      geom_bar(position="stack", stat="identity")+
+   ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+# 
+print(p)
+
+```
+Drugresponse for RT edited for the paper:
+
+```{r, DR for RT edited fir the paper,echo=FALSE}
+RT_samples <- temp %>% dplyr::filter(treatment=='RT') %>% select(sample.id , region) %>% unique()
+tmp_rt<- temp%>% 
+  dplyr::filter(sample.id %in% RT_samples$sample.id) %>% 
+  dplyr::filter(treatment %in% c('Control', 'RT'),sample.id%in%main) %>% 
+  select(sample.id:OID, p53, p21, pH2AX)  
+
+
+tmp_rt <- tmp_rt %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         pH2AX = plyr::mapvalues(pH2AX, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21,'_p53', p53, '_pH2AX',pH2AX)) %>%
+  mutate(Sample = paste(sample.id, region, treatment, sep = '_'))
+
+
+
+table(tmp_rt$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+#making plots for Bulk samples:
+ tmp_rt_Bulk <- tmp_rt %>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_rt_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+tmp_table <- tmp_table %>% left_join(samples) %>% separate(Sample, c('sample.id', 'region','treatment'), sep = '_') %>% mutate(New = paste(region,treatment, sep = '_'))
+
+
+
+
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=New, x=Freq)) +
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()+
+  scale_x_reverse()+facet_grid(sample.id~.)
+
+print(p)
+print(i)
+
+
+#plots for two samples:
+
+# tmp_rt_two <- tmp_rt %>% dplyr::filter(sample.id %in% c('LBT231'))# %>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+# # 
+# tmp_table <- table(tmp_rt_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+# tmp_table %>% spread(Sample, Freq)
+# # 
+# # 
+# # 
+# p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+#       geom_bar(position="stack", stat="identity")+
+#    ggtitle("RT")+
+#   scale_fill_manual(values=colors2)+
+#   scale_x_reverse()
+# # 
+# print(p)
+
+```
+
+
+Drugresponse for RT without cotrol:
+
+```{r, DR for RT without control,echo=FALSE}
+RT_samples <- temp %>% dplyr::filter(treatment=='RT') %>% select(sample.id , region) %>% unique()
+tmp_rt<- temp%>% 
+  #dplyr::filter(sample.id %in% RT_samples$sample.id) %>% 
+  dplyr::filter(treatment %in% c('RT')) %>% 
+  select(sample.id:OID, p53, p21, pH2AX)  
+
+
+tmp_rt <- tmp_rt %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         pH2AX = plyr::mapvalues(pH2AX, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21,'_p53', p53, '_pH2AX',pH2AX)) %>%
+  mutate(Sample = paste(sample.id, region, treatment, sep = '_'))
+
+
+
+table(tmp_rt$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+#making plots for Bulk samples:
+ tmp_rt_Bulk <- tmp_rt %>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_rt_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+
+print(p)
+print(i)
+
+
+#plots for two samples:
+
+tmp_rt_two <- tmp_rt %>% dplyr::filter(sample.id %in% c('LBT231'))# %>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+# 
+tmp_table <- table(tmp_rt_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+# 
+# 
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+      geom_bar(position="stack", stat="identity")+
+   ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+# 
+print(p)
+
+```
+
+
+
+Now Drug Response for CD45+ population:
+
+
+```{r, drug response for CD45P population all dataset, echo =FALSE}
+Markers <- c('p53', 'p21', 'MDM2', 'CC3', 'BAX','pH2AX','pATM')
+
+df_data_new_temp <- df_data_new %>% select(sample.id:OID, Markers, predicted.celltype)
+df_data_old_temp <- df_data_old %>% select(sample.id:OID, Markers, predicted.celltype)
+
+df_data_drug <- rbind(df_data_new_temp,df_data_old_temp)
+
+
+df_data_dplyr::filtered <- df_data_drug %>% 
+  dplyr::filter(label!='BC') %>% 
+  dplyr::filter(predicted.celltype%in%c("T_cells","myeloid cells")) %>% 
+  na.omit(p53, p21, MDM2, CC3, BAX,pH2AX,pATM) %>% 
+  gather(marker,value, Markers) %>% 
+  mutate(value=asinh(value)) %>% 
+  dplyr::filter(treatment%in%c('Control','RT','AMG232'),marker%in%Markers) %>% 
+  #dplyr::filter(value>0) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) %>% 
+  mutate(ID = paste(sample.id , region, sep ='_'))
+
+df_dplyr::filtered <- df_data_dplyr::filtered
+
+```
+
+
+
+
+
+Density plots for Tcells and myeloids:
+
+```{r density plot per marker2 for CD45P, fig.height =6, fig.width = 22, echo=FALSE}
+
+tmp_plot <- df_dplyr::filtered %>%# gather(marker,value, BAX:Vimentin) %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # dplyr::filter(sample.id != 'LBT005') %>% 
+  dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+ggplot(tmp_plot %>% dplyr::filter(region == 'Bulk', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(tmp_plot %>% dplyr::filter(region=='Bulk',treatment == 'Control', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+ggplot(tmp_plot %>% dplyr::filter(marker == 'p53', treatment == 'Control', region=='Bulk', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  # geom_density() +
+  geom_freqpoly() + 
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  # facet_grid(marker~sample.id, scales = 'free') + 
+  facet_wrap(~sample.id) +
+  scale_y_log10() +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+GMM for Tcells and myeloids:
+
+```{r GMM for CD45Positive, fig.height = 5, fig.width = 12, echo=FALSE}
+
+library(mixtools)
+df_data<-df_data_dplyr::filtered %>% mutate(ID = paste(sample.id , region, sep = '_'))
+df_gmm <- data.frame()
+for(i in unique(df_data$ID)){
+  print(i)
+  # for(j in unique(df_data$marker)){
+  for(j in c('p53', 'p21', 'MDM2', 'CC3', 'BAX','pH2AX','pATM')){
+    if (i=='UKK011_Bulk'&j=='p53'){
+      tmp_data <- df_data %>% dplyr::filter(ID == i, marker == j, treatment == 'Control', value > 0.5)
+    }
+    else{
+    tmp_data <- df_data %>% dplyr::filter(ID == i, marker == j, treatment == 'Control', value > 0)
+    }#%>% 
+    tmp_gmm <- normalmixEM(tmp_data$value)
+    df_gmm <- df_gmm %>% bind_rows(data.frame(ID = i, marker = j, mu = c(tmp_gmm$mu[1], tmp_gmm$mu[2]), sigma = c(tmp_gmm$sigma[1], tmp_gmm$sigma[2]), G = c('gaussian01', 'gaussian02')))
+  }
+}
+
+df_gmm <- df_gmm %>% mutate(Q95 = qnorm(0.05, mu, sigma, lower.tail = FALSE))
+df_gmm <- df_gmm %>% group_by(ID, marker) %>% dplyr::filter(mu == min(mu)) %>% ungroup()
+df_dummy_data <- data.frame()
+
+for(i in unique(df_gmm$ID)){
+  tmp_gmm <- df_gmm %>% dplyr::filter(ID == i)
+  tmp_dummy_data <- rnorm(1e4, tmp_gmm$mu, tmp_gmm$sigma)
+  df_dummy_data <- df_dummy_data %>% bind_rows(data.frame(ID = i, value = tmp_dummy_data))
+}
+
+```
+
+
+For every cell/marker, we calculate the probability of belonging to the control distribution. Two tails: P(value>red) P(value<red) Tcells and myeloids:
+
+```{r pvalues for tcells and myeloids}
+
+tmp_data <- df_data %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # dplyr::filter(sample.id != 'LBT005') %>% 
+  group_by(marker, sample.id, region, label, batch) %>% 
+  mutate(M = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         S = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         p.high = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = FALSE),
+         p.low = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = TRUE)) %>% 
+  ungroup()
+
+# ggplot(tmp_data, aes(p.high, fill = treatment), alpha = 0.2) + geom_density() + theme_bw() + facet_grid(sample.id ~ marker, scales = 'free')
+plot(density(tmp_data$p.high))
+plot(density(tmp_data$p.low))
+
+```
+
+
+
+The distribution of p-values looks more or less uniform -> good QC.
+
+We define as induction for a marker those cells with a p-value < 0.025 for either tail. p-low < 0.025 (-1), p.high < 0.025 (+1), else 0.
+
+```{r dichotomize induction for tcells amd myeloids,fig.width=22, fig.height=8, echo =FALSE}
+tmp_data <- df_data %>% dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'CC3', 'BAX','pH2AX','pATM'))
+
+# tmp_data <- tmp_data %>%
+#   mutate(group = ifelse(p.high < 0.05, 1, 0))
+
+tmp_data <- tmp_data %>% 
+  left_join(df_gmm) %>% 
+  mutate(group = ifelse(value > Q95, 1, 0))
+
+tmp_data <- tmp_data %>%
+  #mutate(group = ifelse(is.na(group2), group, group2)) %>%
+  select(sample.id:group)
+
+tmp_plot <- tmp_data %>% 
+  # dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX')) %>% 
+  dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+tmp_cutoffs <- tmp_plot %>% 
+  dplyr::filter(treatment == 'Control') %>% 
+  dplyr::filter(group == 1) %>% 
+  group_by(ID, marker) %>% 
+  summarise(value = min(value)) %>% 
+  ungroup()
+
+ggplot(tmp_plot%>% dplyr::filter(value>0) , aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_cutoffs, aes(xintercept = value), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~ID, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+```
+
+
+
+
+
+
+
+We define as induction for a marker those cells with a value < cut-off found based on 95% of first normal distribution obtained by GMM.
+
+Drugresponse for AMG in CD45P population:
+
+```{r, Drugresponse for AMG in tcells and myeloids, fig.height = 16 , fig.width=12,echo=FALSE}
+
+
+temp <- tmp_data %>% select(sample.id:marker,group) 
+
+temp <- temp %>% spread(marker, group)
+write.csv2(temp , file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv'), row.names=FALSE)
+temp <- read.csv2(file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv'), stringsAsFactors = FALSE)
+
+tmp_amg <- temp %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232')) %>% 
+  select(sample.id:OID, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53,'_MDM2',MDM2 )) %>% 
+  mutate(Sample = paste(sample.id, region, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+
+
+print(p)
+#print(i)
+
+one <- brewer.pal( n=11,name = "YlOrRd")
+two <- brewer.pal( n=11,name = "YlGnBu")
+#plots for two samples:
+
+tmp_amg_two <- tmp_amg %>% dplyr::filter(sample.id %in% c('LBT231', 'LBT240', 'LBT145')) #%>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+
+tmp_table <- table(tmp_amg_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+ 
+
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+      geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+#
+print(p)
+
+```
+
+
+
+Drugresponse for AMG without Control for tcells and myeloids:
+
+```{r, Drugresponse for AMG without Control for tcells and myeloids, fig.height = 16 , fig.width=12,echo=FALSE}
+
+
+temp <- tmp_data %>% select(sample.id:marker,group) 
+
+temp <- temp %>% spread(marker, group)
+write.csv2(file.path(wd, 'DrugResponse forTumoral cells Biobsies.csv', row_names=FALSE))
+
+
+tmp_amg <- temp %>% 
+  dplyr::filter(treatment %in% c('AMG232')) %>% 
+  select(sample.id:OID, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53, '_MDM2',MDM2)) %>% 
+  mutate(Sample = paste(sample.id, region, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+
+print(p)
+#print(i)
+
+
+#plots for two samples:
+
+tmp_amg_two <- tmp_amg %>% dplyr::filter(sample.id %in% c('LBT231', 'LBT240', 'LBT145')) #%>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+
+tmp_table <- table(tmp_amg_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+ 
+
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+      geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+#
+print(p)
+
+```
+
+
+
+
+
+Drugresponse for RT in CD45Positive population whole data set:
+
+```{r, DR for RT in tcells and myeloids ,echo=FALSE}
+RT_samples <- temp %>% dplyr::filter(treatment=='RT') %>% select(sample.id , region) %>% unique()
+tmp_rt<- temp%>% 
+  dplyr::filter(sample.id %in% RT_samples$sample.id) %>% 
+  dplyr::filter(treatment %in% c('Control', 'RT')) %>% 
+  select(sample.id:OID, p53, p21, pH2AX)  
+
+
+tmp_rt <- tmp_rt %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         pH2AX = plyr::mapvalues(pH2AX, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21,'_p53', p53, '_pH2AX',pH2AX)) %>%
+  mutate(Sample = paste(sample.id, region, treatment, sep = '_'))
+
+
+
+table(tmp_rt$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+#making plots for Bulk samples:
+ tmp_rt_Bulk <- tmp_rt %>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_rt_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+
+print(p)
+print(i)
+
+
+#plots for two samples:
+
+tmp_rt_two <- tmp_rt %>% dplyr::filter(sample.id %in% c('LBT231'))# %>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+# 
+tmp_table <- table(tmp_rt_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+# 
+# 
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+      geom_bar(position="stack", stat="identity")+
+   ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+# 
+print(p)
+
+```
+
+
+
+
+
+Drugresponse for RT without cotrol in cd45 positive population:
+
+```{r, DR for RT without control for tcells and myeloids,echo=FALSE}
+RT_samples <- temp %>% dplyr::filter(treatment=='RT') %>% select(sample.id , region) %>% unique()
+tmp_rt<- temp%>% 
+  #dplyr::filter(sample.id %in% RT_samples$sample.id) %>% 
+  dplyr::filter(treatment %in% c('RT')) %>% 
+  select(sample.id:OID, p53, p21, pH2AX)  
+
+
+tmp_rt <- tmp_rt %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         pH2AX = plyr::mapvalues(pH2AX, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21,'_p53', p53, '_pH2AX',pH2AX)) %>%
+  mutate(Sample = paste(sample.id, region, treatment, sep = '_'))
+
+
+
+table(tmp_rt$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+#making plots for Bulk samples:
+ tmp_rt_Bulk <- tmp_rt %>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_rt_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) +
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+
+print(p)
+print(i)
+
+
+#plots for two samples:
+
+tmp_rt_two <- tmp_rt %>% dplyr::filter(sample.id %in% c('LBT231'))# %>% mutate(Sample.id = paste(sample.id,region,sep='_'))
+# 
+tmp_table <- table(tmp_rt_two[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+# 
+# 
+# 
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+      geom_bar(position="stack", stat="identity")+
+   ggtitle("RT")+
+  scale_fill_manual(values=colors2)+
+    theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  scale_x_reverse()
+# 
+print(p)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
