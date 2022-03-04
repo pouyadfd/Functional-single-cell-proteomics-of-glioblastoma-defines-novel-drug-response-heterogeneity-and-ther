@@ -1,0 +1,465 @@
+---
+title: "Github- Mouse experiment"
+author: "Pouya Nazari"
+date: "3/4/2022"
+output: html_document
+---
+---
+title: "DrugResponseComparison of Mouse samples"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r, setting working directory}
+library(tidyverse)
+
+wd <- file.path(getwd())
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r, reading and displaying the gated SOX2P files, fig.width=14, fig.height=6, echo=FALSE}
+
+tmp_files <- list.files(file.path(wd, 'PDCL SOX2P'), pattern = 'csv')
+df_data <- lapply(tmp_files, function(x){
+  tmp_data <- read.csv(file.path(wd, 'PDCL SOX2P', x), stringsAsFactors = FALSE)
+  }) %>% bind_rows() %>% select(-Sox2h, -CD45h, -sample.id , -IdU, -ID)
+
+file_names <- read.csv(file.path(wd, 'Naming PDX data.csv'), stringsAsFactors = FALSE) %>% rename(ofile = Original.file.name, sample = New.ID)
+
+df_data <- df_data %>% left_join(file_names, 'ofile') %>%   dplyr::filter(sample !='PDX-LBT003_InVivo_AMG232') 
+
+ggplot(df_data, aes(x = asinh(Sox2),y = asinh(CD45),col = selected_))+ geom_point(size = 0.01) + facet_wrap(~sample)
+test <- df_data %>% gather(marker,value,BAX:Vimentin) %>% dplyr::filter(marker%in%c('CD45' , 'Sox2')) %>% spread(marker,value)
+ggplot(test ,aes(x = asinh(Sox2),y = asinh(CD45),col = selected_))+ geom_point(size = 0.01) + facet_wrap(~sample)
+
+```
+
+
+```{r, refining dataframe and filtering gated data, echo = FALSE, eval=FALSE}
+df_data_temp <- df_data %>% dplyr::filter(selected_ == 'TRUE')%>%  group_by(sample) %>% separate(sample, c('sample.id', 'treatment'), sep = '_') %>% select(-selected_) %>% gather(marker,value, BAX:Vimentin) %>%  mutate(value = asinh(value))%>% ungroup() 
+
+
+ggplot((df_data_temp %>% dplyr::filter(marker%in%c('Sox2','CD45')) %>% spread(marker,value)), aes(x = Sox2,y = CD45 ,col = treatment ))+ geom_point(size = 0.01) + facet_wrap(~sample.id)
+write.csv2(df_data_temp %>% na.omit(value), file.path(wd, 'PDCL-dataset.csv'), row.names = FALSE)
+
+```
+
+Density plots
+
+```{r density plot per marker, fig.height = 8, fig.width = 16}
+df_data <- read.csv2(file.path(wd, 'PDCL-dataset.csv'),stringsAsFactors = FALSE)
+
+tmp_plot <- df_data %>% 
+  dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) 
+
+ggplot(tmp_plot , aes(value, color = treatment)) + 
+  geom_density() +
+  facet_wrap(~marker, scales = 'free',ncol=4) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+
+
+
+
+```
+Density plots
+
+```{r density plot per marker2, fig.height =6, fig.width = 10, echo=FALSE}
+
+tmp_plot <- df_data%>%# gather(marker,value, BAX:Vimentin) %>% 
+  dplyr::filter(marker %in% c('p53')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232')))
+
+ggplot(tmp_plot %>% dplyr::filter( value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+
+ggplot(tmp_plot %>% dplyr::filter(treatment == 'Control', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+
+
+
+ggplot(tmp_plot %>% dplyr::filter(marker == 'p53', treatment == 'Control', value > 0.2), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  # geom_density() +
+  geom_freqpoly() + 
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  # facet_grid(marker~sample.id, scales = 'free') + 
+  facet_wrap(~sample.id) +
+  scale_y_log10() +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+
+```
+
+Deconvolve the control distribution in 2 gaussians using GMM
+
+First decide which gaussians need to be separated
+
+```{r GMM criterion,echo=FALSE, eval=FALSE}
+
+tmp_rank <- tmp_plot %>% dplyr::filter(marker == 'p53', treatment == 'Control') %>% group_by(sample.id) %>% summarise(M = mean(value), S = sd(value)) %>% ungroup() %>% mutate(CV = S/M) %>% mutate(rank.CV = rank(CV), rank.S = rank(S)) %>% arrange(rank.CV) %>% mutate(sample.id = factor(sample.id, levels = sample.id))
+
+ggplot(tmp_rank, aes(sample.id, S)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(tmp_rank, aes(rank.S, S)) + geom_point() + theme_bw()
+ggplot(tmp_rank, aes(sample.id, CV)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(tmp_rank, aes(rank.CV, CV)) + geom_point() + theme_bw()
+
+```
+
+```{r GMM, fig.height = 5, fig.width = 12,echo=FALSE}
+
+library(mixtools)
+df_data<-df_data%>% mutate(ID = sample.id)
+df_gmm <- data.frame()
+for(i in unique(df_data$ID)){
+  print(i)
+  # for(j in unique(df_data$marker)){
+  for(j in c('p53')){
+    if (i=='UKK011_Bulk'&j=='p53'){
+      tmp_data <- df_data %>% dplyr::filter(ID == i, marker == j, treatment == 'Control', value > 0.5)
+    }
+    else{
+    tmp_data <- df_data %>% dplyr::filter(ID == i, marker == j, treatment == 'Control', value > 0)
+    }#%>% 
+    tmp_gmm <- normalmixEM(tmp_data$value)
+    df_gmm <- df_gmm %>% bind_rows(data.frame(ID = i, marker = j, mu = c(tmp_gmm$mu[1], tmp_gmm$mu[2]), sigma = c(tmp_gmm$sigma[1], tmp_gmm$sigma[2]), G = c('gaussian01', 'gaussian02')))
+  }
+}
+
+df_gmm <- df_gmm %>% mutate(Q95 = qnorm(0.05, mu, sigma, lower.tail = FALSE))
+df_gmm <- df_gmm %>% group_by(ID, marker) %>% dplyr::filter(mu == min(mu)) %>% ungroup()
+df_dummy_data <- data.frame()
+
+for(i in unique(df_gmm$ID)){
+  tmp_gmm <- df_gmm %>% dplyr::filter(ID == i)
+  tmp_dummy_data <- rnorm(1e4, tmp_gmm$mu, tmp_gmm$sigma)
+  df_dummy_data <- df_dummy_data %>% bind_rows(data.frame(ID = i, value = tmp_dummy_data))
+}
+
+```
+For every cell/marker, we calculate the probability of belonging to the control distribution. Two tails: P(value>red) P(value<red)
+
+```{r pvalues tumors, echo=FALSE,eval=FALSE}
+
+tmp_data <- df_data %>% select(-ofile) %>% 
+  group_by(sample.id,marker) %>% 
+  mutate(M = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         S = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         p.high = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = FALSE),
+         p.low = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = TRUE)) %>% 
+  ungroup()
+
+# ggplot(tmp_data, aes(p.high, fill = treatment), alpha = 0.2) + geom_density() + theme_bw() + facet_grid(sample.id ~ marker, scales = 'free')
+plot(density(tmp_data$p.high))
+plot(density(tmp_data$p.low))
+
+```
+
+The distribution of p-values looks more or less uniform -> good QC.
+
+We define as induction for a marker those cells with a p-value < 0.025 for either tail. p-low < 0.025 (-1), p.high < 0.025 (+1), else 0.
+
+```{r dichotomize induction,fig.width=22, fig.height=8 , echo=FALSE}
+tmp_data <- tmp_data %>% dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'CC3', 'BAX','pH2AX','pATM'))
+
+# tmp_data <- tmp_data %>%
+# #   mutate(group = ifelse(p.high < 0.05, 1, 0))
+# 
+# tmp_data <- tmp_data %>% 
+#   left_join(df_gmm) %>% mutate(Q95 = ifelse(sample.id == 'PDX-BT112-270720'&marker=='p21', 3.7, Q95)) %>% 
+#   mutate(group = ifelse(value > Q95, 1, 0))
+# 
+# tmp_data <- tmp_data %>% mutate()
+# 
+# tmp_data <- tmp_data %>%
+#   #mutate(group = ifelse(is.na(group2), group, group2)) %>%
+#   select(OID:group)
+tmp_data <- tmp_data %>% 
+  mutate(group = ifelse(p.high < 0.05, 1, 0))
+
+tmp_data <- tmp_data %>% 
+  left_join(df_gmm) %>% 
+  mutate(group2 = ifelse(value > Q95, 1, 0))
+
+tmp_data <- tmp_data %>% 
+  mutate(group = ifelse(is.na(group2), group, group2)) %>% 
+  select(OID:group)
+tmp_plot <- tmp_data %>% 
+  # filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX')) %>% 
+  dplyr::filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232')))
+
+tmp_cutoffs <- tmp_plot %>% 
+  dplyr::filter(treatment == 'Control') %>% 
+  dplyr::filter(group == 1) %>% 
+  group_by(ID, marker) %>% 
+  summarise(value = min(value)) %>% 
+  ungroup()
+
+#write.csv2(tmp_cutoffs,file.path(wd,'cutoffs_mouse.csv'),row.names = FALSE)
+
+cutoffs <- read.csv2(file.path(wd,'cutoffs_mouse.csv'),stringsAsFactors = FALSE,sep = '\t',dec=',') %>% rename(cut = value) 
+
+
+temp <- tmp_data %>% left_join(cutoffs)
+#############REading LBT003 data
+LBT003 <- read.csv2(file.path(wd, 'LBT003.csv'),stringsAsFactors = FALSE) %>% select(OID, sample.id , treatment, marker,value,cutoff) %>% rename(cut = cutoff) %>% mutate(cut=ifelse(sample.id=='LBT003'&marker=='p53',4.8,cut))
+temp2 <- temp %>% select(OID, sample.id , treatment , marker, value, cut)
+
+temp <- temp2 %>% rbind(LBT003)
+temp <- temp %>% mutate(group = ifelse(value>cut,1,0))
+ggplot(temp%>% dplyr::filter(value>0) , aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = temp, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(strip.text = element_text(size = 15))+
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+
+ggplot(tmp_plot%>% dplyr::filter(value>0) , aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_cutoffs, aes(xintercept = value), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~ID, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(strip.text = element_text(size = 15))+
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+```
+
+
+```{r dichotomize induction22,fig.width=8, fig.height=8 , echo=FALSE}
+#write.csv2(temp , file.path(wd,'MouseDrugResponse.csv'),row.names = FALSE)
+#write.csv2(temp , file.path(wd,'MouseDrugResponseWithLBT003.csv'),row.names = FALSE)
+temp<- read.csv2(file.path(wd,'MouseDrugResponseWithLBT003.csv'),stringsAsFactors = FALSE) %>% mutate(treatment = factor(treatment,levels = c('Control','AMG232')))
+tmp_plot <- temp %>% dplyr::filter(marker%in%c('MDM2','p21','p53','BAX','CC3')) %>% mutate(marker = factor(marker, levels = c('MDM2','p21','p53','BAX','CC3'))) %>% mutate(ID= sample.id)
+tmp_plot2 <- tmp_plot%>% dplyr::filter(value>0 ,sample.id%in%c("PDX-BT112-270720","BT112-270720","PDX-LBT003-ExVivo","LBT003")) %>% mutate(ID = ifelse(ID=="PDX-BT112-270720","PDX-BT112",ifelse(ID=="BT112-270720","BT112",ID))) %>% 
+  mutate(ID = factor(ID , levels = c("BT112", "PDX-BT112", "LBT003", "PDX-LBT003-ExVivo")))
+# tmp_cutoffs2 <-tmp_cutoffs %>% dplyr::filter(ID%in%c("PDX-BT112-270720","BT112-270720","PDX-LBT003-ExVivo"))%>% mutate(ID = ifelse(ID=="PDX-BT112-270720","PDX-BT112",ifelse(ID=="BT112-270720","BT112",ID)))
+
+png(file.path(wd, 'paper_figures', 'densityplotswithBAXandCC3main.png'), width = 10, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot2, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_plot2, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~ID, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(strip.text = element_text(size = 15))+
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+dev.off()
+
+png(file.path(wd, 'paper_figures', 'densityplotswithBAXandCC3sup.png'), width = 8, height = 6, units = 'in', res = 300)
+tmp_plot2 <- tmp_plot%>% dplyr::filter(value>0 ,!ID%in%c("PDX-BT112-270720","BT112-270720","PDX-LBT003-ExVivo","LBT003"))
+#tmp_cutoffs2 <-tmp_cutoffs %>% dplyr::filter(!ID%in%c("PDX-BT112-270720","BT112-270720","PDX-LBT003-ExVivo"))
+ggplot(tmp_plot2, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_plot2, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~ID, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(strip.text = element_text(size = 15))+
+  scale_color_manual(values=c("#F8766D", "#00BA38"))
+dev.off()
+
+```
+
+
+We define as induction for a marker those cells with a value < cut-off found based on 95% of first normal distribution obtained by GMM.
+
+Drugresponse for AMG:
+
+```{r, Drugresponse for AMG, fig.height = 12 , fig.width=12,echo=FALSE}
+
+
+temp <- temp %>% select(OID:marker,group) 
+
+temp <- temp %>% spread(marker, group)
+#write.csv2(temp , file.path(wd, 'DrugResponse forTumoral cells PDCLWithLBT003.csv'), row.names=FALSE)
+temp <- read.csv2(file.path(wd, 'DrugResponse forTumoral cells PDCLWithLBT003.csv'), stringsAsFactors = FALSE) #%>% mutate(sample.id = factor(sample.id , levels = c("BT112-270720", "PDX-BT112-270720", "LBT003", "PDX-LBT003-ExVivo","BT112-231020","PDX-BT112-231020")))
+
+tmp_amg <- temp %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232')) %>% 
+  select(OID:treatment, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53,'_MDM2',MDM2 )) %>% 
+  mutate(Sample = paste(sample.id, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg
+samples <- tmp_amg %>% select(sample.id,Sample) %>% unique()
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+
+tmp_table <- tmp_table %>% left_join(samples) %>% separate(Sample, c('sample.id', 'treatment'), sep = '_') 
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+p<- ggplot(tmp_table, aes(fill=ID, y=treatment, x=Freq)) + 
+     geom_bar(position="stack", stat="identity", width = 0.6)+
+  ggtitle("AMG and Control")+ 
+  theme(axis.text = element_text(size = 15)) +
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))+
+  theme(strip.text = element_text(size = 15))+
+  scale_fill_manual(values=colors2)+facet_grid(sample.id~.)
+png(file.path(wd, 'paper_figures', 'drugresponseall.png'), width = 8, height = 12, units = 'in', res = 300)
+print(p)
+dev.off()
+#print(i)
+
+```
+
+
+```{r, Drugresponse for AMG22, fig.height = 8 , fig.width=12,echo=FALSE}
+
+p<- ggplot(tmp_table %>% dplyr::filter(!sample.id %in% c('PDX-BT112-231020','BT112-231020')) %>% mutate(sample.id = ifelse(sample.id=="PDX-BT112-270720","PDX-BT112",ifelse(sample.id=="BT112-270720","BT112",sample.id))) %>% mutate(sample.id = factor(sample.id , levels = c("BT112","PDX-BT112","LBT003","PDX-LBT003-ExVivo"))), aes(fill=ID, y=treatment, x=Freq)) + 
+     geom_bar(position="stack", stat="identity", width = 0.6)+
+  ggtitle("Drug response for AMG")+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))+
+  theme(strip.text = element_text(size = 15))+
+  scale_fill_manual(values=colors2)+facet_grid(sample.id~.)
+
+png(file.path(wd, 'paper_figures', 'drugresponsemain.png'), width = 8, height = 10, units = 'in', res = 300)
+print(p)
+dev.off()
+#print(i)
+
+p<- ggplot(tmp_table %>% dplyr::filter(sample.id %in% c('PDX-BT112-231020','BT112-231020')), aes(fill=ID, y=treatment, x=Freq)) + 
+     geom_bar(position="stack", stat="identity", width = 0.6)+
+  ggtitle("Drug response for AMG")+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))+
+  theme(strip.text = element_text(size = 15))+
+  scale_fill_manual(values=colors2)+facet_grid(sample.id~.)
+
+png(file.path(wd, 'paper_figures', 'drugresponseSup.png'), width = 8, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+```
+
+
+
+Drugresponse for AMG without Control:
+
+```{r, Drugresponse for AMG without Control, fig.height = 6 , fig.width=10,echo=FALSE}
+
+
+tmp_amg <- temp %>% 
+  dplyr::filter(treatment %in% c('AMG232')) %>% 
+  select(OID:treatment, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_p53', p53,'_MDM2',MDM2 )) %>% 
+  mutate(Sample = paste(sample.id, treatment,sep='_')) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity", width = 0.6)+
+  ggtitle("Drug response for AMG")+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))+
+  theme(strip.text = element_text(size = 15))+
+  scale_fill_manual(values=colors2)
+
+
+print(p)
+
+
+
+p<- ggplot(tmp_table %>% dplyr::filter(!Sample %in% c('PDX-BT112-231020_AMG232','BT112-231020_AMG232')), aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity", width = 0.7)+
+  ggtitle("Drug response for AMG")+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))+
+  theme(strip.text = element_text(size = 15))+
+  scale_fill_manual(values=colors2)
+
+
+print(p)
+#print(i)
+
+p<- ggplot(tmp_table %>% dplyr::filter(Sample %in% c('PDX-BT112-231020_AMG232','BT112-231020_AMG232')), aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity", width = 0.7)+
+  ggtitle("Drug response for AMG")+
+    theme(axis.text = element_text(size = 15))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))+
+  theme(strip.text = element_text(size = 15))+
+  scale_fill_manual(values=colors2)
+
+
+print(p)
+
+```
+
+
