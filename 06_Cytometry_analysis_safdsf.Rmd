@@ -1,0 +1,820 @@
+---
+title: 'Cluster Stability (Phenotypic Markers)'
+author: "Asier Antoranz"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, cache = FALSE, cache.lazy = FALSE, fig.align = 'center')
+```
+
+## Introduction
+
+```{r LoadData}
+
+library(tidyverse)
+library(RColorBrewer)
+
+wd <- file.path(getwd())
+
+df_data_all <- read.csv2(file.path(wd, 'Data', 'df_data_norm.csv'), stringsAsFactors = FALSE) %>% 
+  filter(label != 'BC') %>% 
+  filter(batch != 1) %>% 
+  filter(sample.id != 'Astrocytes') %>% 
+  mutate(time.point = ifelse(sample.id == 'BT360' & treatment == 'Control' & time.point == 48, 16, time.point)) %>% 
+  mutate(time.point = ifelse(sample.id == 'LBT005' & treatment == 'Control' & time.point == 48, 16, time.point)) %>% 
+  # filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  mutate(treatment = ifelse(sample.id == 'LBT062', plyr::mapvalues(treatment, from = c('Control', 'AMG232', 'RT'), to = c('Control', 'RT', 'AMG232')), treatment)) %>% 
+  bind_rows(read.csv2(file.path(wd, 'Data', 'df_data.csv'), stringsAsFactors = FALSE) %>% 
+              filter(label != 'BC') %>% 
+              filter(batch == 1) %>% 
+              mutate(value = asinh(value)) %>% 
+              filter(sample.id != 'Astrocytes')) %>% 
+  select(-tmp_alpha, -OVL, -OVL.ref)
+
+df_celltypes <- read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations.csv'), stringsAsFactors = FALSE) %>% 
+  bind_rows(read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations_batch1.csv'), stringsAsFactors = FALSE))
+df_tumortypes <- read.csv2(file.path(wd, 'Data', 'tumor_subtype_annotations.csv'), stringsAsFactors = FALSE) %>% 
+  bind_rows(read.csv2(file.path(wd, 'Data', 'tumor_subtype_annotations_batch1.csv'), stringsAsFactors = FALSE))
+
+df_data_all <- df_data_all %>% 
+  select(sample.id:OID, marker, value) %>% 
+  group_by(sample.id, treatment, time.point, label, batch, OID, marker) %>% 
+  summarise(value = max(value)) %>% 
+  ungroup() %>% 
+  left_join(df_celltypes) %>% 
+  left_join(df_tumortypes)
+
+
+df_data_all <- df_data_all %>% mutate(predicted.celltype = ifelse(predicted.celltype == "OPC_NPC", "NPC_OPC",predicted.celltype))
+write.csv2(df_data_all , file.path(wd, 'df_data_all_cellline.csv'),row.names = FALSE)
+```
+
+Marker expression per batch cell line
+
+```{r marker distribution, fig.height = 8, fig.width = 12}
+#Dena asked me to remove filter timepoint16 so it's only on control samples through the whole dataset
+df_data_all <- read.csv2(file.path(wd, 'df_data_all_cellline.csv'),stringsAsFactors = FALSE)
+df_data <- df_data_all %>% 
+  filter(treatment == 'Control') %>% 
+  filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  filter(marker %in% c('PDGFRa', 'Olig2', 'p53', 'Sox2', 'MDM2', 'GFAP', 'CD44','CD24','Nestin','Vimentin')) %>% 
+  group_by(batch, sample.id, marker) %>% 
+  mutate(mean.Intensity = mean(value)) %>% 
+  ungroup()
+
+png(file.path(wd,  'paper_figures', 'marker_expression_heatmap.png'), width = 10, height = 12, units = 'in', res = 300)
+ggplot(df_data, aes(value, fill = mean.Intensity)) + geom_density() + theme_bw() + facet_grid(paste('batch', batch)+sample.id~marker) + scale_fill_gradient2(low = 'royalblue', mid = 'grey87', high = 'firebrick', midpoint = mean(df_data$value)) + xlab('marker expression') + ylab('function density')
+dev.off()
+
+df_data <- df_data %>% 
+  mutate(sample.id = paste('batch', batch, sample.id)) %>% 
+  group_by(sample.id, marker) %>% 
+  summarise(value = mean(value)) %>% 
+  ungroup()
+
+tmp_hm <- df_data %>% spread(sample.id, value)
+tmp_rows <- tmp_hm$marker
+tmp_matrix <- tmp_hm %>% select(-marker) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+
+par(mar=c(4,4,4,2)+0.1) 
+png(file.path(wd, 'paper_figures', 'marker_expression_heatmap_hc.png'), width = 6, height = 6, units = 'in', res = 300)
+# tmp_hm <- heatmap(tmp_matrix, col = brewer.pal(7,"RdYlBu")) # labCol = "", add.expr = text(x = seq_along(colnames(tmp_matrix))-1, y = -0.4, srt = 45, labels = colnames(tmp_matrix), xpd = TRUE)
+gplots::heatmap.2(tmp_matrix, col=brewer.pal(100,"RdYlBu"), scale="row",
+                     key=TRUE, symkey=FALSE, density.info="none",cexRow=1,cexCol=1,margins=c(12,8),trace="none",srtCol=45)
+dev.off()
+
+```
+```{r, making heatmaps for control batch2 and 3, echo=FALSE}
+
+df_data <- df_data_all %>% dplyr::filter(treatment == 'Control', batch%in%c(2,3))
+
+# tmp_table <- table(df_data[c('treatment', 'cell_cycle_phase')]) %>% as.data.frame() %>% group_by(treatment) %>% mutate(P = 100*Freq/sum(Freq)) %>% ungroup() %>% select(-Freq) %>% spread(treatment, P)
+# DT::datatable(tmp_table)
+
+tmp_table <- df_data %>% dplyr::filter(!sample.id%in%c("2080","5050","8020")) %>% group_by(predicted.celltype, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% group_by(predicted.celltype) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-M, -N) %>% spread(predicted.celltype, P, fill = 0)
+DT::datatable(tmp_table, filter = 'top')
+
+
+tmp_hm <- tmp_table  
+tmp_rows <- tmp_hm$cell_cycle_phase
+tmp_matrix <- tmp_hm %>% select(-cell_cycle_phase) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+png(file.path(wd, 'paper_figures', 'heatmap_cellcyclepahse_tumorsubtype_V2.png'), width = 8, height = 8, units = 'in', res = 300)
+tmp_hm <- heatmap(tmp_matrix)
+
+dev.off()
+
+
+tmp_table <- df_data %>% dplyr::filter(!sample.id%in%c("2080","5050","8020")) %>% group_by(predicted.celltype, sample.id) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-M, -N) %>% spread(sample.id, P, fill = 0)
+DT::datatable(tmp_table, filter = 'top')
+tmp_hm <- tmp_table #%>% select(-treatment, -time.point)
+tmp_rows <- tmp_hm$predicted.celltype
+tmp_matrix <- tmp_hm %>% select(-predicted.celltype) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+
+png(file.path(wd, 'paper_figures', 'heatmap_sample_tumorsubtype.png'), width = 8, height = 8, units = 'in', res = 300)
+tmp_hm <- heatmap(tmp_matrix)#+legend(x="right")
+dev.off()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+Cytometry per cell cycle (time point 16)
+
+```{r cytometry cell cycle, fig.height = 8, fig.width = 16}
+
+df_data <- df_data_all %>% filter(time.point == 16)
+
+# tmp_table <- table(df_data[c('treatment', 'cell_cycle_phase')]) %>% as.data.frame() %>% group_by(treatment) %>% mutate(P = 100*Freq/sum(Freq)) %>% ungroup() %>% select(-Freq) %>% spread(treatment, P)
+# DT::datatable(tmp_table)
+
+tmp_table <- df_data %>% group_by(sample.id, treatment, time.point, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, treatment, time.point) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-M, -N) %>% spread(cell_cycle_phase, P, fill = 0)
+DT::datatable(tmp_table, filter = 'top')
+
+tmp_plot <- tmp_table %>% gather(cell_cycle_phase, P, G0G1:S) %>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) %>% 
+  filter(!(sample.id %in% c('2080', '5050', '8020')))
+
+tmp_hm <- tmp_plot %>% filter(treatment == 'Control') %>% group_by(cell_cycle_phase) %>% mutate(P = scale(P)) %>% ungroup() %>% spread(sample.id, P) %>% select(-treatment, -time.point)
+tmp_rows <- tmp_hm$cell_cycle_phase
+tmp_matrix <- tmp_hm %>% select(-cell_cycle_phase) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+tmp_hm <- heatmap(tmp_matrix)
+
+tmp_plot <- tmp_plot %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = unique(tmp_plot$cell_cycle_phase)[tmp_hm$rowInd]),
+                                sample.id = factor(sample.id, levels = unique(tmp_plot$sample.id)[tmp_hm$colInd]))
+
+png(file.path(wd,  'paper_figures', 'cytometry_cell_cycle.png'), width = 12, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + 
+  geom_col(position = 'dodge') + 
+  facet_grid(cell_cycle_phase~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Cell Proportion (%)')
+dev.off()
+
+tmp_plot <- tmp_table %>% gather(cell_cycle_phase, P, G0G1:S) %>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) %>% 
+  filter(sample.id %in% c('BT333', '2080', '5050', '8020', 'BT360'))
+
+tmp_hm <- tmp_plot %>% filter(treatment == 'Control') %>% group_by(cell_cycle_phase) %>% mutate(P = scale(P)) %>% ungroup() %>% spread(sample.id, P) %>% select(-treatment, -time.point)
+tmp_rows <- tmp_hm$cell_cycle_phase
+tmp_matrix <- tmp_hm %>% select(-cell_cycle_phase) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+tmp_hm <- heatmap(tmp_matrix)
+
+tmp_plot <- tmp_plot %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = unique(tmp_plot$cell_cycle_phase)[tmp_hm$rowInd]),
+                                sample.id = factor(sample.id, levels = unique(tmp_plot$sample.id)[tmp_hm$colInd])) %>% 
+  mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1', 'S', 'G2', 'M')),
+         sample.id = factor(sample.id, levels = c('BT360', '8020', '5050', '2080', 'BT333')))
+
+png(file.path(wd, 'paper_figures', 'cytometry_cell_cycle_gradient.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + 
+  geom_col(position = 'dodge') + 
+  facet_grid(cell_cycle_phase~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Cell Proportion (%)')
+dev.off()
+
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(cell_cycle_phase~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+DT::datatable(tmp_table, filter = 'top')
+# write.csv2(tmp_table, file.path(wd, 'Results', 'cellular_composition.csv'), row.names = FALSE)
+
+```
+
+Towards which phenotype are the samples shifting after treatment?
+
+```{r conf matrix treatment}
+
+tmp_table <- df_data_all %>% 
+  filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  filter(time.point == 16) %>% 
+  filter(marker == 'BAX') %>% 
+  select(sample.id, treatment, time.point, label, batch, OID, cell_cycle_phase) %>%
+  unique()
+
+tmp_plot <- tmp_table %>% 
+  group_by(sample.id, treatment, cell_cycle_phase) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>%
+  mutate(M = sum(N)) %>% 
+  mutate(P = 100*(N/M)) %>% 
+  ungroup()
+
+tmp_plot_complete <- expand.grid(unique(tmp_table$sample.id), unique(tmp_table$cell_cycle_phase), unique(tmp_table$treatment))
+colnames(tmp_plot_complete) <- c('sample.id', 'cell_cycle_phase', 'treatment')
+
+tmp_plot_complete <- tmp_plot_complete %>% 
+  # left_join(df_profiling_immune %>% select(sample_id, response) %>% unique()) %>% 
+  left_join(tmp_plot) %>% 
+  mutate(P = ifelse(is.na(P), 0, P))
+
+library(ggpubr)
+
+comparisons_treatment <- list( c("AMG232", "Control"), c('AMG232', 'RT'), c("RT", "Control"))
+
+ggplot(tmp_plot_complete, aes(treatment, P, fill = treatment)) + geom_boxplot() + theme_bw() + geom_jitter(alpha = 0.2) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + 
+  facet_wrap(~cell_cycle_phase, scales = 'free_y', ncol = 5) + 
+  stat_compare_means(comparisons = comparisons_treatment, aes(label = ..p.signif..), paired = TRUE) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) + 
+  theme(legend.position = 'none') + 
+  xlab(NULL) + ylab('Relative number of tumor cell (%)')
+
+library(rstatix)
+
+stat.test <- tmp_plot_complete %>%
+  group_by(cell_cycle_phase) %>%
+  wilcox_test(P ~ treatment, paired = TRUE) %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+
+tmp_p_max <- tmp_plot_complete %>% group_by(cell_cycle_phase) %>% summarise(Pmax = max(P)) %>% ungroup()
+# stat.test <- stat.test %>% left_join(tmp_p_max)
+stat.test <- stat.test %>% 
+  mutate(ID = paste(group1, group2, sep = '_')) %>% 
+  group_by(cell_cycle_phase) %>% 
+  left_join(tmp_p_max) %>% 
+  filter(p.adj < 0.05) %>% 
+  mutate(Ns = as.numeric(plyr::mapvalues(ID, from = unique(ID), to = seq(from = 1.05, by = 0.05, length.out = n_distinct(ID))))) %>% 
+  mutate(Pmax = Ns*Pmax) %>% 
+  ungroup()
+
+png(file.path(wd, 'paper_figures', 'treatment_shift_cell_cycle_phase_WT.png'), width = 12, height = 5, units = 'in', res = 300)
+ggboxplot(tmp_plot_complete, x = "treatment", y = "P", fill = "treatment") + #, palette = "jco", # ylim = c(0, 40)
+  theme_bw() + 
+  geom_jitter(alpha = 0.2) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Tumor Cell Proportion (%)') +
+  facet_wrap(~cell_cycle_phase, nrow = 1, scales = 'free_y') + 
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", y.position = 'Pmax')
+dev.off()
+
+```
+```{r conf matrix treatment for MUT group}
+meta_table <- read.csv2(file.path(wd, 'Data', 'Metatable_PDCL.csv'),stringsAsFactors=FALSE, sep = '\t')
+df_data_all_tmp <- df_data_all %>% left_join(meta_table %>% rename(treatment = Treatment,  time.point= Timepoint, sample = BC.Sample, batch=Batch) %>%  select(sample.id, treatment, time.point, batch, p53 ) ) %>% 
+  mutate(treatment = factor(treatment , levels =  c('Control','AMG232','RT'))) %>% 
+  mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1','S','G2','M')))
+tmp_table <- df_data_all_tmp %>% 
+  filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  filter(time.point == 16) %>% 
+  filter(p53=='MUT') %>% 
+  filter(marker == 'BAX') %>% 
+  select(sample.id, treatment, time.point, label, batch, OID, cell_cycle_phase) %>%
+  unique()
+
+tmp_plot <- tmp_table %>% 
+  group_by(sample.id, treatment, cell_cycle_phase) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>%
+  mutate(M = sum(N)) %>% 
+  mutate(P = 100*(N/M)) %>% 
+  ungroup()
+
+tmp_plot_complete <- expand.grid(unique(tmp_table$sample.id), unique(tmp_table$cell_cycle_phase), unique(tmp_table$treatment))
+colnames(tmp_plot_complete) <- c('sample.id', 'cell_cycle_phase', 'treatment')
+
+tmp_plot_complete <- tmp_plot_complete %>% 
+  # left_join(df_profiling_immune %>% select(sample_id, response) %>% unique()) %>% 
+  left_join(tmp_plot) %>% 
+  mutate(P = ifelse(is.na(P), 0, P))
+
+library(ggpubr)
+
+comparisons_treatment <- list( c("AMG232", "Control"), c('AMG232', 'RT'), c("RT", "Control"))
+
+ggplot(tmp_plot_complete, aes(treatment, P, fill = treatment)) + geom_boxplot() + theme_bw() + geom_jitter(alpha = 0.2) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + 
+  facet_wrap(~cell_cycle_phase, scales = 'free_y', ncol = 5) + 
+  stat_compare_means(comparisons = comparisons_treatment, aes(label = ..p.signif..), paired = TRUE) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) + 
+  theme(legend.position = 'none') + 
+  xlab(NULL) + ylab('Relative number of tumor cell (%)')
+
+library(rstatix)
+
+stat.test <- tmp_plot_complete %>%
+  group_by(cell_cycle_phase) %>%
+  wilcox_test(P ~ treatment, paired = TRUE) %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+
+tmp_p_max <- tmp_plot_complete %>% group_by(cell_cycle_phase) %>% summarise(Pmax = max(P)) %>% ungroup()
+# stat.test <- stat.test %>% left_join(tmp_p_max)
+stat.test <- stat.test %>% 
+  mutate(ID = paste(group1, group2, sep = '_')) %>% 
+  group_by(cell_cycle_phase) %>% 
+  left_join(tmp_p_max) %>% 
+  filter(p.adj < 0.05) %>% 
+  mutate(Ns = as.numeric(plyr::mapvalues(ID, from = unique(ID), to = seq(from = 1.05, by = 0.05, length.out = n_distinct(ID))))) %>% 
+  mutate(Pmax = Ns*Pmax) %>% 
+  ungroup()
+
+png(file.path(wd, 'paper_figures', 'treatment_shift_cell_cycle_phase_MUT.png'), width = 12, height = 5, units = 'in', res = 300)
+ggboxplot(tmp_plot_complete, x = "treatment", y = "P", fill = "treatment") + #, palette = "jco", # ylim = c(0, 40)
+  theme_bw() + 
+  geom_jitter(alpha = 0.2) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Tumor Cell Proportion (%)') +
+  facet_wrap(~cell_cycle_phase, nrow = 1, scales = 'free_y') + 
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", y.position = 'Pmax')
+dev.off()
+
+```
+```{r conf matrix treatment for WD group}
+meta_table <- read.csv2(file.path(wd, 'Data', 'Metatable_PDCL.csv'),stringsAsFactors=FALSE, sep = '\t')
+df_data_all_tmp <- df_data_all %>% left_join(meta_table %>% rename(treatment = Treatment,  time.point= Timepoint, sample = BC.Sample, batch=Batch) %>%  select(sample.id, treatment, time.point, batch, p53 ) ) %>% 
+  mutate(treatment = factor(treatment , levels =  c('Control','AMG232','RT'))) %>% 
+  mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1','S','G2','M')))
+tmp_table <- df_data_all_tmp %>% 
+  filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  filter(time.point == 16) %>% 
+  filter(p53=='WT') %>% 
+  filter(marker == 'BAX') %>% 
+  select(sample.id, treatment, time.point, label, batch, OID, cell_cycle_phase) %>%
+  unique()
+
+tmp_plot <- tmp_table %>% 
+  group_by(sample.id, treatment, cell_cycle_phase) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>%
+  mutate(M = sum(N)) %>% 
+  mutate(P = 100*(N/M)) %>% 
+  ungroup()
+
+tmp_plot_complete <- expand.grid(unique(tmp_table$sample.id), unique(tmp_table$cell_cycle_phase), unique(tmp_table$treatment))
+colnames(tmp_plot_complete) <- c('sample.id', 'cell_cycle_phase', 'treatment')
+
+tmp_plot_complete <- tmp_plot_complete %>% 
+  # left_join(df_profiling_immune %>% select(sample_id, response) %>% unique()) %>% 
+  left_join(tmp_plot) %>% 
+  mutate(P = ifelse(is.na(P), 0, P))
+
+library(ggpubr)
+
+comparisons_treatment <- list( c("AMG232", "Control"), c('AMG232', 'RT'), c("RT", "Control"))
+
+ggplot(tmp_plot_complete, aes(treatment, P, fill = treatment)) + geom_boxplot() + theme_bw() + geom_jitter(alpha = 0.2) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + 
+  facet_wrap(~cell_cycle_phase, scales = 'free_y', ncol = 5) + 
+  stat_compare_means(comparisons = comparisons_treatment, aes(label = ..p.signif..), paired = TRUE) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) + 
+  theme(legend.position = 'none') + 
+  xlab(NULL) + ylab('Relative number of tumor cell (%)')
+
+library(rstatix)
+
+stat.test <- tmp_plot_complete %>%
+  group_by(cell_cycle_phase) %>%
+  wilcox_test(P ~ treatment, paired = TRUE) %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+
+tmp_p_max <- tmp_plot_complete %>% group_by(cell_cycle_phase) %>% summarise(Pmax = max(P)) %>% ungroup()
+# stat.test <- stat.test %>% left_join(tmp_p_max)
+stat.test <- stat.test %>% 
+  mutate(ID = paste(group1, group2, sep = '_')) %>% 
+  group_by(cell_cycle_phase) %>% 
+  left_join(tmp_p_max) %>% 
+  filter(p.adj < 0.05) %>% 
+  mutate(Ns = as.numeric(plyr::mapvalues(ID, from = unique(ID), to = seq(from = 1.05, by = 0.05, length.out = n_distinct(ID))))) %>% 
+  mutate(Pmax = Ns*Pmax) %>% 
+  ungroup()
+
+png(file.path(wd, 'paper_figures', 'treatment_shift_cell_cycle_phase_WT.png'), width = 12, height = 5, units = 'in', res = 300)
+ggboxplot(tmp_plot_complete, x = "treatment", y = "P", fill = "treatment") + #, palette = "jco", # ylim = c(0, 40)
+  theme_bw() + 
+  geom_jitter(alpha = 0.2) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Tumor Cell Proportion (%)') +
+  facet_wrap(~cell_cycle_phase, nrow = 1, scales = 'free_y') + 
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", y.position = 'Pmax')
+dev.off()
+
+```
+
+Cytometry per predicted.celltype (time point 16)
+
+```{r cytometry predicted.celltype, fig.height = 8, fig.width = 16}
+
+df_data <- df_data_all %>% filter(time.point == 16)
+
+tmp_table <- table(df_data[c('treatment', 'predicted.celltype')]) %>% as.data.frame() %>% group_by(treatment) %>% mutate(P = 100*Freq/sum(Freq)) %>% ungroup() %>% select(-Freq) %>% spread(treatment, P)
+DT::datatable(tmp_table)
+
+
+tmp_table <- df_data %>% dplyr::filter(treatment== 'Control') %>%  group_by(cell_cycle_phase , predicted.celltype) %>% summarise(N=n()) %>% ungroup() %>% group_by(cell_cycle_phase) %>% mutate(M=sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M ,2)) %>% select(-M,-N) %>% spread(cell_cycle_phase,P,fill=0)
+tmp_hm <- tmp_table
+tmp_rows <- tmp_table$predicted.celltype
+tmp_matrix <- tmp_hm %>% select(-predicted.celltype) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+png(file.path(wd, 'paper_figures', 'heatmap_cellcyclepahse_tumorsubtype.png'), width = 12, height = 8, units = 'in', res = 300)
+  heatmap(tmp_matrix,cexRow = 1.5,cexCol = 1.5)
+dev.off()
+
+
+tmp_table <- df_data %>% dplyr::filter(treatment== 'Control') %>%  group_by(cell_cycle_phase , predicted.celltype) %>% summarise(N=n()) %>% ungroup() %>% group_by(predicted.celltype) %>% mutate(M=sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M ,2)) %>% select(-M,-N) %>% spread(predicted.celltype,P,fill=0)
+tmp_hm <- tmp_table
+tmp_rows <- tmp_table$cell_cycle_phase
+tmp_matrix <- tmp_hm %>% select(-cell_cycle_phase) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+png(file.path(wd, 'paper_figures', 'heatmap_cellcyclepahse_tumorsubtype_V2.png'), width = 12, height = 8, units = 'in', res = 300)
+  heatmap(tmp_matrix,cexRow = 1.5,cexCol = 1.5)
+dev.off()
+
+
+
+
+tmp_table <- df_data %>% group_by(sample.id, treatment, time.point, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, treatment, time.point) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-M, -N) %>% spread(predicted.celltype, P, fill = 0)
+
+tmp_plot <- tmp_table %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) %>% 
+  filter(!(sample.id %in% c('2080', '5050', '8020')))
+
+tmp_hm <- tmp_plot %>% filter(treatment == 'Control') %>% group_by(predicted.celltype) %>% mutate(P = scale(P)) %>% ungroup() %>% spread(sample.id, P) %>% select(-treatment, -time.point)
+tmp_rows <- tmp_hm$predicted.celltype
+tmp_matrix <- tmp_hm %>% select(-predicted.celltype) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+
+
+png(file.path(wd, 'paper_figures', 'heatmap_sample_tumorsubtype.png'), width = 12, height = 8, units = 'in', res = 300)
+tmp_hm <- heatmap(tmp_matrix,cexRow = 1.5,cexCol = 1.5)
+dev.off()
+
+
+tmp_plot <- tmp_plot %>% mutate(predicted.celltype = factor(predicted.celltype, levels = unique(tmp_plot$predicted.celltype)[tmp_hm$rowInd]),
+                                sample.id = factor(sample.id, levels = unique(tmp_plot$sample.id)[tmp_hm$colInd]))
+
+tmp_plot <- tmp_plot %>%mutate(ID2 = paste(sample.id , treatment , sep = '_')) %>%  mutate(significant_fill = ifelse(ID2 %in% c('LBT086_RT', 'BT569_RT', 'BT245_RT','LBT005_RT','BT360_RT','BT333_RT','LBT070_RT','BT112_RT') , 'blue' , ifelse(ID2 %in% c('LBT124_AMG232' , 'BT569_AMG232' , 'BT360_AMG232', 'LBT062_AMG232','BT112_AMG232'), 'green' , 'white')))
+
+
+png(file.path(wd, 'paper_figures', 'cytometry_tumor_subtypes.png'), width = 12, height = 10, units = 'in', res = 300)
+ggplot(tmp_plot, aes(treatment, P, col = treatment)) + 
+  geom_col(data = tmp_plot,position = 'dodge', aes(fill = significant_fill)) + 
+  facet_grid(predicted.celltype~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_fill_manual(values = c("white"='#FFFFFF', "green"='#00BA38', 'blue' = '#619CFF'), guide='none')+guides(colour = guide_legend(override.aes = list(alpha = 1)))+
+  theme(legend.position = 'right') +
+  xlab(NULL) + ylab('Relative Cell Proportion (%)') 
+dev.off()
+
+
+
+
+
+
+###############################New plots with Dena's ORder############################################################
+
+
+tmp_plot <- tmp_plot %>% mutate(predicted.celltype = factor(predicted.celltype, levels = c('MES', 'AC_MES', 'AC', 'AC_OPC', 'MES_OPC', 'mixed.low', 'mixed.high', 'OPC', 'NPC_OPC', 'NPC', 'MES_NPC')), sample.id = factor(sample.id, levels = c('LBT086', 'BT248', 'LBT124', 'BT569', 'LBT059', 'LBT003', 'BT320', 'BT245', 'LBT005', 'BT112', 'BT360', 'BT333', 'LBT070', 'LBT062')))
+
+tmp_plot <- tmp_plot %>%mutate(ID2 = paste(sample.id , treatment , sep = '_')) %>%  mutate(significant_fill = ifelse(ID2 %in% c('LBT086_RT', 'BT569_RT', 'BT245_RT','LBT005_RT','BT360_RT','BT333_RT','LBT070_RT','BT112_RT') , 'blue' , ifelse(ID2 %in% c('LBT124_AMG232' , 'BT569_AMG232' , 'BT360_AMG232', 'LBT062_AMG232','BT112_AMG232'), 'green' , 'white')))
+
+
+png(file.path(wd, 'paper_figures', 'cytometry_tumor_subtypes_V2.png'), width = 12, height = 10, units = 'in', res = 300)
+ggplot(tmp_plot, aes(treatment, P, col = treatment)) + 
+  geom_col(data = tmp_plot,position = 'dodge', aes(fill = significant_fill)) + 
+  facet_grid(predicted.celltype~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_fill_manual(values = c("white"='#FFFFFF', "green"='#00BA38', 'blue' = '#619CFF'), guide='none')+guides(colour = guide_legend(override.aes = list(alpha = 1)))+
+  theme(legend.position = 'right') +
+  xlab(NULL) + ylab('Relative Cell Proportion (%)') 
+dev.off()
+
+
+
+tmp_plot <- tmp_plot %>%mutate(ID2 = paste(sample.id , treatment , sep = '_')) %>%  mutate(significant_fill = ifelse(ID2 %in% c('LBT086_RT', 'BT569_RT', 'BT245_RT','LBT005_RT','BT360_RT','BT333_RT','LBT070_RT','BT112_RT','LBT124_AMG232' , 'BT569_AMG232' , 'BT360_AMG232', 'LBT062_AMG232','BT112_AMG232'), 'siginificant' , 'non-significant'))
+png(file.path(wd, 'paper_figures', 'cytometry_tumor_subtypes_V2.png'), width = 12, height = 10, units = 'in', res = 300)
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + geom_col(data = tmp_plot, position = 'dodge',  aes(alpha = significant_fill)) + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +scale_alpha_ordinal(range = c(0.4, 1))
+dev.off()
+
+
+
+
+
+
+
+tmp_plot <- tmp_plot %>% select(-ID2,-significant_fill)
+
+png(file.path(wd, 'paper_figures', 'cytometry_tumor_subtypes_control.png'), width = 5, height = 8, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(treatment == 'Control'), aes(sample.id, P)) + 
+  geom_col(position = 'dodge') + 
+  # facet_grid(predicted.celltype~sample.id, scales = 'free') + 
+  facet_wrap(~predicted.celltype, ncol = 1, switch = 'y') +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Cell Proportion (%)')
+dev.off()
+
+png(file.path(wd, 'paper_figures', 'cytometry_tumor_subtypes_control_hm.png'), width = 5, height = 4, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(treatment == 'Control'), aes(predicted.celltype, sample.id, fill = P)) + 
+  # geom_col(position = 'dodge') + 
+  geom_tile() +
+  coord_equal() +
+  # facet_grid(predicted.celltype~sample.id, scales = 'free') + 
+  # facet_wrap(~predicted.celltype, ncol = 1, switch = 'y') +
+  theme_bw() + 
+  viridis::scale_fill_viridis() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) #+
+  # theme(legend.position = 'none') +
+  # xlab(NULL) + ylab('Relative Cell Proportion (%)')
+dev.off()
+
+tmp_hm <- tmp_plot %>% filter(treatment == 'Control') %>% group_by(predicted.celltype) %>% mutate(P = scale(P)) %>% ungroup() %>% spread(sample.id, P) %>% select(-treatment, -time.point)
+tmp_rows <- tmp_hm$predicted.celltype
+tmp_matrix <- tmp_hm %>% select(-predicted.celltype) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rows
+
+png(file.path(wd, 'paper_figures', 'cytometry_tumor_subtypes_control_hm_02.png'), width = 5, height = 4, units = 'in', res = 300)
+tmp_hm <- heatmap(tmp_matrix)
+dev.off()
+
+tmp_plot <- tmp_table %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) %>% 
+  filter(sample.id %in% c('BT333', '2080', '5050', '8020', 'BT360'))
+
+# tmp_hm <- tmp_plot %>% filter(treatment == 'Control') %>% group_by(predicted.celltype) %>% mutate(P = scale(P)) %>% ungroup() %>% spread(sample.id, P) %>% select(-treatment, -time.point)
+# tmp_rows <- tmp_hm$predicted.celltype
+# tmp_matrix <- tmp_hm %>% select(-predicted.celltype) %>% as.matrix()
+# rownames(tmp_matrix) <- tmp_rows
+# tmp_hm <- heatmap(tmp_matrix)
+
+tmp_plot <- tmp_plot %>% mutate(predicted.celltype = factor(predicted.celltype, levels = unique(tmp_plot$predicted.celltype)[tmp_hm$rowInd]),
+                                sample.id = factor(sample.id, levels = unique(tmp_plot$sample.id)[tmp_hm$colInd])) %>% 
+  mutate(#predicted.celltype = factor(predicted.celltype, levels = c('G0G1', 'S', 'G2', 'M')),
+         sample.id = factor(sample.id, levels = c('BT360', '8020', '5050', '2080', 'BT333')))
+
+png(file.path(wd, 'paper_figures', 'cytometry_tumor_subtypes_gradient.png'), width = 5, height = 10, units = 'in', res = 300)
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + 
+  geom_col(position = 'dodge') + 
+  facet_grid(predicted.celltype~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Cell Proportion (%)')
+dev.off()
+
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+DT::datatable(tmp_table, filter = 'top')
+# write.csv2(tmp_table, file.path(wd, 'Results', 'cellular_composition.csv'), row.names = FALSE)
+
+```
+```{r, density plots, echo=FALSE}
+df_data <- df_data_all %>% dplyr::filter(time.point == 16)
+
+d_plot <- df_data %>% dplyr::filter(sample.id %in% c('BT360','8020','5050','2080', 'BT333'), marker %in% c('pH2AX', 'MDM2', 'p53','p21'),value>0) %>% mutate(sample.id = factor(sample.id , levels = c('BT360','8020','5050','2080', 'BT333'))) %>% 
+  mutate(treatment = factor(treatment,levels = c('Control' , 'AMG232', 'RT')),marker = factor(marker , levels = c('pH2AX', 'MDM2', 'p53','p21')))
+
+png(file.path(wd, 'paper_figures', 'densityplots.png'), width = 6, height = 4, units = 'in', res = 300)
+ggplot(d_plot, aes(value,col = treatment))+
+  geom_density() +
+  #geom_vline(data = tmp_cutoffs, aes(xintercept = value), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(strip.text = element_text(size = 9))
+dev.off()
+
+d_plot <- df_data %>% dplyr::filter(sample.id %in% c('BT360','8020','5050','2080', 'BT333'), marker %in% c('pH2AX', 'MDM2', 'p53','p21', 'BAX', 'CC3'),value>0) %>% mutate(sample.id = factor(sample.id , levels = c('BT360','8020','5050','2080', 'BT333'))) %>% 
+  mutate(treatment = factor(treatment,levels = c('Control' , 'AMG232', 'RT')),marker = factor(marker , levels = c('pH2AX', 'MDM2', 'p53','p21','BAX','CC3')))
+
+png(file.path(wd, 'paper_figures', 'densityplotswithBAXandCC3.png'), width = 8, height = 6, units = 'in', res = 300)
+ggplot(d_plot, aes(value,col = treatment))+
+  geom_density() +
+  #geom_vline(data = tmp_cutoffs, aes(xintercept = value), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(strip.text = element_text(size = 9))
+dev.off()
+
+```
+
+```{r xisq test}
+
+df_data <- df_data_all %>% filter(time.point == 16)
+
+tmp_table <- table(df_data[c('treatment', 'predicted.celltype')]) %>% as.data.frame() %>% spread(treatment, Freq)
+DT::datatable(tmp_table, filter = 'top')
+
+```
+
+```{r fisher test per patients}
+
+df_data <- df_data_all %>% filter(time.point == 16)
+
+tmp_table <- df_data %>% 
+  group_by(sample.id, treatment, time.point, predicted.celltype) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>%
+  mutate(N = round(500*N/sum(N))) %>%
+  ungroup() %>%
+  spread(treatment, N, fill = 0)
+
+DT::datatable(tmp_table, filter = 'top')
+
+```
+
+```{r stats}
+
+df_stats <- data.frame()
+
+for(i in unique(tmp_table$sample.id)){
+  tmp_fisher <- tmp_table %>% filter(sample.id == i)
+  tmp_fisher <- tmp_fisher %>% select(AMG232, Control) %>% as.matrix()
+  tmp_fisher <- fisher.test(tmp_fisher %>% t(), alternative = 'less', simulate.p.value = TRUE, B=10000)
+  df_stats <- df_stats %>% bind_rows(data.frame(sample.id = i, treatment = 'AMG232', pVal = tmp_fisher$p.value))
+  tmp_fisher <- tmp_table %>% filter(sample.id == i)
+  tmp_fisher <- tmp_fisher %>% select(RT, Control) %>% as.matrix()
+  tmp_fisher <- fisher.test(tmp_fisher, alternative = 'less', simulate.p.value = TRUE, B=10000)
+  df_stats <- df_stats %>% bind_rows(data.frame(sample.id = i, treatment = 'RT', pVal = tmp_fisher$p.value))
+}
+
+df_stats <- df_stats %>% mutate(p.adj = p.adjust(pVal, method = 'fdr')) 
+
+DT::datatable(df_stats, filter = 'top')
+
+```
+
+Towards which phenotype are the samples shifting after treatment?
+
+```{r conf matrix treatment predicted.celltype}
+
+tmp_table <- df_data_all %>% 
+  filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  filter(time.point == 16) %>% 
+  filter(marker == 'BAX') %>% 
+  select(sample.id, treatment, time.point, label, batch, OID, predicted.celltype) %>%
+  unique()
+
+tmp_plot <- tmp_table %>% 
+  group_by(sample.id, treatment, predicted.celltype) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>%
+  mutate(M = sum(N)) %>% 
+  mutate(P = 100*(N/M)) %>% 
+  ungroup()
+
+tmp_plot_complete <- expand.grid(unique(tmp_table$sample.id), unique(tmp_table$predicted.celltype), unique(tmp_table$treatment))
+colnames(tmp_plot_complete) <- c('sample.id', 'predicted.celltype', 'treatment')
+
+tmp_plot_complete <- tmp_plot_complete %>% 
+  # left_join(df_profiling_immune %>% select(sample_id, response) %>% unique()) %>% 
+  left_join(tmp_plot) %>% 
+  mutate(P = ifelse(is.na(P), 0, P))
+
+library(ggpubr)
+
+comparisons_treatment <- list( c("AMG232", "Control"), c('AMG232', 'RT'), c("RT", "Control"))
+
+ggplot(tmp_plot_complete, aes(treatment, P, fill = treatment)) + geom_boxplot() + theme_bw() + geom_jitter(alpha = 0.2) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + 
+  facet_wrap(~predicted.celltype, scales = 'free_y', ncol = 5) + 
+  stat_compare_means(comparisons = comparisons_treatment, aes(label = ..p.signif..), paired = TRUE) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) + 
+  theme(legend.position = 'none') + 
+  xlab(NULL) + ylab('Relative number of tumor cell (%)')
+
+library(rstatix)
+
+stat.test <- tmp_plot_complete %>%
+  group_by(predicted.celltype) %>%
+  wilcox_test(P ~ treatment, paired = TRUE) %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+
+tmp_p_max <- tmp_plot_complete %>% group_by(predicted.celltype) %>% summarise(Pmax = max(P)) %>% ungroup()
+# stat.test <- stat.test %>% left_join(tmp_p_max)
+stat.test <- stat.test %>% 
+  mutate(ID = paste(group1, group2, sep = '_')) %>% 
+  group_by(predicted.celltype) %>% 
+  left_join(tmp_p_max) %>% 
+  filter(p.adj < 0.05) %>% 
+  mutate(Ns = as.numeric(plyr::mapvalues(ID, from = unique(ID), to = seq(from = 1.05, by = 0.05, length.out = n_distinct(ID))))) %>% 
+  mutate(Pmax = Ns*Pmax) %>% 
+  ungroup()
+
+png(file.path(wd,  'paper_figures', 'treatment_shift_tumor_subtypes.png'), width = 15, height = 7, units = 'in', res = 300)
+ggboxplot(tmp_plot_complete, x = "treatment", y = "P", fill = "treatment") + #, palette = "jco", # ylim = c(0, 40)
+  theme_bw() + 
+  geom_jitter(alpha = 0.2) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Relative Tumor Cell Proportion (%)') +
+  facet_wrap(~predicted.celltype, nrow = 2, scales = 'free_y') + 
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", y.position = 'Pmax')
+dev.off()
+
+```
+
+Confusion matrix between tumor subtypes and cell cycle phase (only control, time point 16)
+
+```{r conf matrix, fig.height = 5, fig.width = 16}
+
+df_data <- df_data_all %>% filter(time.point == 16)
+
+tmp_table <- df_data %>% group_by(predicted.celltype, treatment, time.point, cell_cycle_phase) %>% summarise(N = n()) %>% ungroup() %>% group_by(predicted.celltype, treatment, time.point) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-M, -N) %>% spread(cell_cycle_phase, P, fill = 0)
+DT::datatable(tmp_table, filter = 'top')
+write.csv2(tmp_table, file.path(wd, 'confusion_cell_cycle_tumor_subtype.csv'), row.names = FALSE)
+              
+table(df_data[c('predicted.celltype', 'cell_cycle_phase')]) %>% as.data.frame() %>% group_by(predicted.celltype) %>% mutate(M = sum(Freq)) %>% ungroup() %>% mutate(P = round(100*Freq/M, 2)) %>% select(-Freq, -M) %>% spread(cell_cycle_phase, P)
+
+tmp_plot <- df_data %>% 
+  group_by(sample.id, cell_cycle_phase, predicted.celltype) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, predicted.celltype) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*(N/M))
+
+tmp_plot_complete <- expand.grid(unique(df_data$sample.id), unique(df_data$predicted.celltype), unique(df_data$cell_cycle_phase))
+colnames(tmp_plot_complete) <- c('sample.id', 'predicted.celltype', 'cell_cycle_phase')
+
+tmp_plot_complete <- tmp_plot_complete %>% 
+  # left_join(df_profiling_immune %>% select(sample_id, response) %>% unique()) %>% 
+  left_join(tmp_plot) %>% 
+  mutate(P = ifelse(is.na(P), 0, P))
+
+# comparisons_cell_cycle <- list(c("NTA", "TSI"), c('TSI', 'TA'), c("NTA", "TA"))
+tmp_list <- as.data.frame(combn(unique(tmp_plot_complete$predicted.celltype), 2))
+tmp_list <- sapply(tmp_list, function(x) as.character(x), simplify = FALSE)
+
+library(ggpubr)
+library(rstatix)
+
+stat.test <- tmp_plot_complete %>%
+  group_by(cell_cycle_phase) %>%
+  wilcox_test(P ~ predicted.celltype) %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+
+stat.test <- stat.test %>% filter(p.adj < 0.05)
+
+# tmp_p_max <- tmp_plot_complete %>% group_by(predicted.celltype) %>% summarise(Pmax = max(P)) %>% ungroup()
+# stat.test <- stat.test %>% left_join(tmp_p_max)
+stat.test <- stat.test %>% 
+  mutate(ID = paste(group1, group2, sep = '_')) %>% 
+  left_join(tmp_plot_complete %>% group_by(cell_cycle_phase) %>% summarise(maxP = max(P)) %>% ungroup()) %>% 
+  group_by(cell_cycle_phase) %>%
+  mutate(Pmax = as.numeric(plyr::mapvalues(ID, from = unique(ID), to = seq(from = 1, by = 0.05, length.out = n_distinct(ID))))) %>%
+  mutate(Pmax = Pmax*maxP) %>% 
+  ungroup()
+
+ggboxplot(tmp_plot_complete, x = "predicted.celltype", y = "P", fill = "predicted.celltype") + #, palette = "jco", # ylim = c(0, 40)
+  theme_bw() + 
+  geom_jitter(alpha = 0.2) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) +
+  theme(legend.position = 'none') +
+  # xlab(NULL) + ylab('Relative Immune Cell Proportion (%)') +
+  facet_wrap(~cell_cycle_phase, nrow = 1, scales = 'free_y') + 
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", y.position = 'Pmax')
+
+```
+
+
+```{r, cellcycle bar plots, echo=FALSE}
+
+df_data_all <- read.csv2(file.path(wd, 'df_data_all_cellline.csv'),stringsAsFactors = FALSE)
+temp <- df_data_all %>% 
+
+
+
+```

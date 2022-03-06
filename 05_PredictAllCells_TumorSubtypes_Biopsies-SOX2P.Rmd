@@ -1,0 +1,757 @@
+---
+title: 'Cluster Stability (Phenotypic Markers)'
+author: "Asier Antoranz"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, cache = FALSE, cache.lazy = FALSE, fig.align = 'center')
+```
+
+## Introduction
+
+```{r LoadData}
+
+library(tidyverse)
+library(RColorBrewer)
+
+wd <- file.path(getwd())
+
+df_data_all <- read.csv2(file.path(wd, 'Data', 'df_data_Sox2P_4gated.csv'), stringsAsFactors = FALSE)
+
+df_data_all <- df_data_all %>% filter(label != 'BC')
+
+df_data <- df_data_all %>% gather(marker,value,BAX:Vimentin) %>%
+  filter(marker %in% c('GFAP', 'Olig2', 'Nestin', 'Vimentin', 'PDGFRa', 'CD44', 'CD24'))
+
+df_annotations <- read.csv(file.path(wd, 'Data', 'df_data_consensus_Sox2P.csv'), stringsAsFactors = FALSE) #%>% 
+  # filter(CellType %in% c('AC', 'MES', 'NPC', 'OPC'))
+
+df_data_training <- df_annotations %>%
+  select(CellType, c('GFAP', 'Olig2', 'Nestin', 'Vimentin', 'PDGFRa', 'CD44', 'CD24'))
+
+phenomarkers <-  c('GFAP', 'Olig2', 'Nestin', 'Vimentin', 'PDGFRa', 'CD44', 'CD24')
+
+```
+
+```{r train svm, eval = FALSE}
+
+library(doParallel)
+cl <- makePSOCKcluster(20)
+registerDoParallel(cl)
+
+# install.packages("caret", dependencies = c("Depends", "Suggests"))
+library(caret)
+library(e1071)
+# df_fingerprints <- t(t(df_fingerprints/colMeans(df_fingerprints)))
+# df_matrix_training <- t(t(df_matrix_training/colMeans(df_matrix_training)))
+
+# Set up Repeated k-fold Cross Validation
+train_control <- trainControl(method="repeatedcv", number=10, repeats=3)
+
+tmp_svm <- train(CellType ~., data = df_data_training, method = "svmRadial", trControl = train_control, tuneLength = 20) # ,  preProcess = c("center","scale")
+# df_data_training <- df_data_training %>% mutate(CellType = as.factor(CellType))
+
+# tmp_svm <- svm(CellType ~ ., data = df_data_training, probability=TRUE)
+#View the model
+dir.create(file.path(wd, 'Results'))
+saveRDS(tmp_svm, file.path(wd, 'Results', 'svm_model_tumor_subtypes_Sox2P.R'))
+
+stopCluster(cl)
+
+```
+
+```{r load mdoel}
+
+tmp_svm <- readRDS(file.path(wd, 'Results', 'svm_model_tumor_subtypes_Sox2P.R'))
+
+# plot(tmp_svm)
+
+tmp_res <- as_tibble(tmp_svm$results)
+ggplot(tmp_res, aes(log(C), Accuracy)) + geom_point() + geom_line() + theme_bw()
+
+# tmp_svm <- train(CellType ~., data = df_data_training, method = 'svmRadial', trControl = train_control)
+
+tmp_results <- predict(tmp_svm, df_data_training)
+
+tmp_results <- df_data_training %>% mutate(predicted.celltype = tmp_results %>% as.character())
+table(tmp_results[c('CellType', 'predicted.celltype')])
+sum(diag(table(tmp_results[c('CellType', 'predicted.celltype')])))/sum(table(tmp_results[c('CellType', 'predicted.celltype')]))
+
+```
+
+Predict whole dataset and evaluate the proportion of cells for the annotated cell type.
+
+```{r predict whole dataset, fig.height = 8, fig.width = 18}
+
+df_data_testing <- df_data %>% 
+  group_by(marker) %>% 
+  dplyr::mutate(value = scale(value)) %>% 
+  ungroup() %>% 
+  mutate(value = ifelse(value > 3, 3, value)) %>% 
+  mutate(value = ifelse(value < -3, -3, value)) %>% 
+  spread(marker, value)
+
+df_data_testing <- df_data_testing %>% 
+  mutate(predicted.celltype = predict(tmp_svm, .) %>% as.character())
+
+# df_data_testing <- lapply(c(1:nrow(df_data_testing)), function(x){
+#   tmp_cell <- df_data_testing[x,]
+#   tmp_preds <- predict(tmp_svm, tmp_cell, probability=TRUE)
+#   tmp_cell <- tmp_cell %>% cbind(attr(tmp_preds, 'probabilities'))
+# }) %>% bind_rows()
+
+#write.csv2(df_data_testing, file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'), row.names = FALSE)
+```
+
+```{r, reading annotated cell population, fig.width=16, filg.height= 10, echo=FALSE}
+
+df_data_testing <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'),stringsAsFactors = FALSE)
+
+
+tmp_table <- df_data_testing %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-N,-M) %>% spread(predicted.celltype, P, fill = 0)
+
+
+tmp_plot <- tmp_table %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(ID=paste(sample.id,region,sep='_'))%>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+################################################################################################################################################################
+#barplots for control only:
+
+tmp_plot_bulk <- tmp_plot %>% filter (region =='Bulk')
+tmp_plot_control <- tmp_plot %>% filter(treatment=='Control'& region=='Bulk')
+
+tmp_matrix <- tmp_plot_control %>% filter(treatment == 'Control') %>% select(-ID) %>% spread(sample.id, P)
+tmp_cells <- tmp_matrix$predicted.celltype
+tmp_matrix <- tmp_matrix  %>% select(LBT221:UKK025) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_cells
+tmp_hm <- heatmap(tmp_matrix)
+rownames <- rownames(tmp_matrix)[tmp_hm$rowInd]
+colnames <- colnames(tmp_matrix)[tmp_hm$colInd]
+
+tmp_plot_bulk <- tmp_plot_bulk %>% 
+  mutate(predicted.celltype = factor(predicted.celltype, levels = rownames)) %>% 
+  mutate(sample.id = factor(sample.id, levels = colnames))
+
+ggplot(tmp_plot_bulk, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+#ggsave(path = file.path(wd,  'Results', 'tumor_barplots_bulk'), width = 100, height = 100, device='tiff', dpi=700)
+
+tiff(file.path(wd,  'Results', 'tumor_barplots_bulk.tiff'), units="cm",height = 30, width=50,res=600)
+ggplot(tmp_plot_bulk, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+#############two samples########################################################################################################################
+
+tmp_plot_2 <- tmp_plot %>% filter (sample.id %in% c('LBT231','LBT240'))
+
+tmp_plot_2 <- tmp_plot_2 %>% 
+  mutate(predicted.celltype = factor(predicted.celltype, levels = rownames))
+
+
+tiff(file.path(wd,  'Results', 'tumor_barplots_twoSamples.tiff'),units="cm",height = 25, width=20,res=600)
+ggplot(tmp_plot_2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~ID, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+# ggplot(tmp_plot_2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+
+tmp_plot_bulk$ID <- factor(tmp_plot_bulk$ID,      # Reordering group factor levels
+                         levels = c("UKK011_Bulk", "LBT239_Bulk","LBT240_Bulk", "LBT242_Bulk", "UKK012_Bulk", "UKK025_Bulk","LBT379_Bulk", "LBT399_Bulk", "UKK023_Bulk", "LBT250_Bulk" , "LBT273_Bulk","LBT221_Bulk","LBT231_Bulk","LBT252_Bulk","LBT268_Bulk","LBT293_Bulk","UKK021_Bulk","LBT247_Bulk"))
+
+
+
+
+```
+
+
+Plots for G0G1:
+```{r, G0G1 graphs, fig.width=16,fig.height=8, echo=FALSE}
+
+df_g0g1<- read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations.csv'), stringsAsFactors = FALSE)
+
+df_annotated <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'), stringsAsFactors = FALSE)
+
+df_temp <- df_annotated %>% left_join(df_g0g1)
+df_data_G0G1 <- df_temp %>% filter(cell_cycle_phase=='G0G1')
+
+
+# df_tmp <- df_data_G0G1  %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N= n()) %>% ungroup() %>% spread(predicted.celltype, N, fill = 0)
+
+# tmp_table <- table(df_data_G0G1$predicted.celltype) %>% as.data.frame() %>% mutate(Freq = Freq) %>%mutate(P = 100*Freq/sum(Freq)) %>% arrange(-P)
+# DT::datatable(tmp_table)
+
+
+tmp_table_G0G1 <- df_data_G0G1 %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-N,-M) %>% spread(predicted.celltype, P, fill = 0)
+
+
+tmp_plot_G0G1 <- tmp_table_G0G1 %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(ID=paste(sample.id,region,sep='_'))%>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+
+####################################################################################################
+#barplots for control only:
+
+tmp_plot_bulk_G0G1 <- tmp_plot_G0G1 %>% filter (region =='Bulk')
+tmp_plot_control_G0G1 <- tmp_plot_G0G1 %>% filter(treatment=='Control'& region=='Bulk')
+
+# tmp_matrix <- tmp_plot_control %>% filter(treatment == 'Control') %>% select(-ID) %>% spread(sample.id, P)
+# tmp_cells <- tmp_matrix$predicted.celltype
+# tmp_matrix <- tmp_matrix  %>% select(LBT221:UKK025) %>% as.matrix()
+# rownames(tmp_matrix) <- tmp_cells
+# tmp_hm <- heatmap(tmp_matrix)
+
+tmp_plot_bulk_G0G1 <- tmp_plot_bulk_G0G1 %>% 
+  mutate(predicted.celltype = factor(predicted.celltype, levels = rownames)) %>% 
+  mutate(sample.id = factor(sample.id, levels = colnames))
+
+ggplot(tmp_plot_bulk_G0G1, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+#ggsave(path = file.path(wd,  'Results', 'tumor_barplots_bulk'), width = 100, height = 100, device='tiff', dpi=700)
+
+tiff(file.path(wd,  'Results', 'tumor_barplots_bulk_G0G1.tiff'),units="cm",height = 30, width=50,res=600)
+ggplot(tmp_plot_bulk_G0G1, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+#############two samples########################################################################################################################
+
+tmp_plot_2_G0G1 <- tmp_plot_G0G1 %>% filter (sample.id %in% c('LBT231','LBT240'))
+
+tmp_plot_2_G0G1 <- tmp_plot_2_G0G1 %>% 
+  mutate(predicted.celltype = factor(predicted.celltype, levels = rownames))
+
+
+tiff(file.path(wd,  'Results', 'tumor_barplots_twoSamples_G0G1.tiff'),units="cm",height = 25, width=20,res=600)
+ggplot(tmp_plot_2_G0G1, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~ID, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+# ggplot(tmp_plot_2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+
+tmp_plot_bulk$ID <- factor(tmp_plot_bulk$ID,      # Reordering group factor levels
+                         levels = c("UKK011_Bulk", "LBT239_Bulk","LBT240_Bulk", "LBT242_Bulk", "UKK012_Bulk", "UKK025_Bulk","LBT379_Bulk", "LBT399_Bulk", "UKK023_Bulk", "LBT250_Bulk" , "LBT273_Bulk","LBT221_Bulk","LBT231_Bulk","LBT252_Bulk","LBT268_Bulk","LBT293_Bulk","UKK021_Bulk","LBT247_Bulk"))
+
+##################################################################################################################################
+
+# tmp_plot2$sample.id <- factor(tmp_plot$sample.id,      # Reordering group factor levels
+#                          levels = c("UKK011", "LBT239","LBT240", "LBT242", "UKK012", "UKK025","LBT379", "LBT399", "UKK023", "LBT250" , "LBT273","LBT221","LBT231","LBT252","LBT268","LBT293","UKK021","LBT247"))
+
+
+
+
+DT::datatable(tmp_table, filter = 'top')
+write.csv2(tmp_table, file.path(wd, 'Results', 'cellular_composition_Sox2P_G0G1.csv'), row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r,}
+
+df_tmp <- df_data_testing  %>% group_by(sample.id, region, treatment, predicted.celltype) %>% 
+                                       summarise(N= n()) %>% mutate(ID=paste(sample.id, region,sep='_')) %>%ungroup() %>% as.data.frame() #%>% spread(predicted.celltype,N)
+
+df_tmp <- df_tmp %>% spread(predicted.celltype, N, fill = 0)
+
+
+t <- data.frame() 
+t <- NULL
+g <- data.frame() 
+g<- NULL
+for (i in unique(df_tmp$ID)){
+  
+  df1 <- df_tmp %>% filter(ID == i& treatment=='Control')
+
+  df2 <- df_tmp %>% filter(ID == i & treatment=='AMG232')
+  df<- rbind(df1,df2)  %>% select(AC:OPC)
+  Fish <- fisher.test(df, simulate.p.value='TRUE')
+  CHI <- chisq.test(as.matrix(df))
+  sample.id <- unique(df1$sample.id)
+  region=unique(df1$region)
+  FISH = Fish$p.value
+  CHI = CHI$p.value
+  t<- cbind(sample.id,region,FISH,CHI) %>% as.data.frame()
+  # t<- t %>% mutate(sample.id=unique(df1$sample.id), region=unique(df1$region), FISH = Fish$p.value)
+  # g<- g%>% rbind(t)
+  if (length(g)==0){
+    g<-t
+  }
+  g<-g%>% rbind(t)
+}
+
+print(g)
+
+write.csv2(g, file.path(wd, 'Results', 'Chi-fisher AMG.csv'), row.names = FALSE)
+
+ fish <-g$FISH
+ ch <- g$CHI
+ 
+ vector <- cbind (fish,ch) %>% as.numeric()
+ ans <-p.adjust(as.matrix(vector), method='BH')
+ p_corrected <- ans[1:21]
+ p_corrected2<- ans[22:42]
+p_t <- data.frame() 
+
+t <- NULL
+g <- data.frame() 
+g<- NULL
+for (i in unique(df_tmp$ID)){
+  
+  df1 <- df_tmp %>% filter(ID == i& treatment=='Control')
+
+  df2 <- df_tmp %>% filter(ID == i & treatment=='RT')
+  if (length(df2!=0)){
+  df<- rbind(df1,df2)  %>% select(AC:OPC)
+  Fish <- fisher.test(df, simulate.p.value='TRUE')
+  CHI <- chisq.test(as.matrix(df))
+  sample.id <- unique(df1$sample.id)
+  region=unique(df1$region)
+  FISH = Fish$p.value
+  CHI = CHI$p.value
+  t<- cbind(sample.id,region,FISH,CHI) %>% as.data.frame()
+  # t<- t %>% mutate(sample.id=unique(df1$sample.id), region=unique(df1$region), FISH = Fish$p.value)
+  # g<- g%>% rbind(t)
+  if (length(g)==0){
+    g<-t
+  }
+  g<-g%>% rbind(t)
+  }
+}
+
+print(g)
+write.csv2(g, file.path(wd, 'Results', 'Chi-fisher RT.csv'), row.names = FALSE)
+# 
+# a <- df_tmp %>% filter(treatment!='RT'&sample.id=='LBT250') %>% gather(predicted.celltype, N, AC:OPC) %>% group_by(sample.id, region) %>% summarise(amg.vs.ctr = fisher.test(N[treatment == 'AMG232'], N[treatment == 'Control'])$p.value,) %>% ungroup()
+# 
+# df_data<- df_data_testing %>% filter(sample.id=='LBT250')
+
+
+# tmp_table <- table(df_data$predicted.celltype,df_data$treatment) %>% as.data.frame.matrix() %>% t()
+#   group_by(region, treatment) %>% mutate(P = 100*Freq/sum(Freq)) %>% arrange(-P)
+#            
+#            
+#            regionmutate(P = 100*Freq/sum(Freq)) %>% arrange(-P)
+# DT::datatable(tmp_table)
+
+
+
+
+
+DT::datatable(tmp_table, filter = 'top')
+write.csv2(tmp_table, file.path(wd, 'Results', 'cellular_composition_Sox2P.csv'), row.names = FALSE)
+
+
+```
+```{r, 2sample plot, echo=FALSE, fig.width=6 , fig.height=8}
+ggplot(tmp_plot_2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~ID, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+```
+
+```{r tmp_plot}
+
+ggplot(df_data_testing, aes(x=CD24, y=Olig2, fill = log10(..count..))) +
+     geom_bin2d(bins = 70) +
+     scale_fill_continuous(type = "viridis") +
+     theme_bw()
+
+ggplot(df_data_testing, aes(x=GFAP, y=Olig2, fill = log10(..count..))) +
+     geom_bin2d(bins = 70) +
+     scale_fill_continuous(type = "viridis") +
+     theme_bw()
+
+tmp_test <- df_data_testing %>% 
+  sample_n(1e4)
+
+tmp_test <- tmp_test %>%
+  group_by(sample.id, region, treatment, OID) %>% 
+  mutate(AC = GFAP, OPC = mean(Olig2, PDGFRa), NPC = mean(CD24, Nestin), MES = mean(Vimentin, CD44)) %>% 
+  # ungroup() %>% 
+  mutate(DC1 = max(NPC, OPC)-max(AC, MES)) %>% 
+  mutate(x1 = log2(abs(AC-MES)), x2 = log2(abs(OPC-NPC))) %>% 
+  mutate(x = ifelse(DC1 < 0, x1, x2)) %>% 
+  ungroup()
+
+# ggplot(tmp_test, aes(x=CD24, y=Olig2, fill = log10(..count..))) +
+#      geom_bin2d(bins = 70) +
+#      scale_fill_continuous(type = "viridis") +
+#      theme_bw()
+
+# ggplot(tmp_test, aes(x, DC1)) + geom_point() + theme_bw()
+
+# GGally::ggpairs(tmp_test, )
+tmp_plot <- tmp_test %>% 
+  gather(marker, value, AC, OPC, NPC, MES)
+
+ggplot(tmp_plot, aes(value, fill = marker)) + geom_density(alpha = 0.6) + theme_bw()
+ggplot(tmp_plot, aes(x, DC1, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, nrow = 2) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0)
+
+tmp_plot2 <- tmp_test %>% 
+  gather(marker, value, CD24:Vimentin)
+
+ggplot(tmp_plot2, aes(x, DC1, color = value)) + geom_point() + theme_bw() + facet_wrap(~marker, nrow = 2) + scale_color_gradient2(low = 'royalblue', mid = 'white', high = 'firebrick', midpoint = 0)
+
+# library(fmsb)
+ 
+# Create data: note in High school for Jonathan:
+# data <- as.data.frame(matrix( sample( 2:20 , 10 , replace=T) , ncol=10))
+# colnames(data) <- c("math" , "english" , "biology" , "music" , "R-coding", "data-viz" , "french" , "physic", "statistic", "sport" )
+ 
+# To use the fmsb package, I have to add 2 lines to the dataframe: the max and min of each topic to show on the plot!
+# data <- rbind(rep(20,10) , rep(0,10) , data)
+ 
+# Check your data, it has to look like this!
+# head(data)
+
+# The default radar chart 
+# radarchart(tmp_test %>% select())
+
+```
+
+```{r plot per marker, fig.height = 8, fig.width = 16}
+
+df_data_all <- df_data_all %>% 
+  #filter(batch != 1, sample.id != 'Astrocytes') %>% 
+  # mutate(time.point = ifelse(time.point == 0, 16, time.point)) %>% 
+  #mutate(time.point = ifelse(sample.id == 'BT360' & treatment == 'Control' & time.point == 48, 16, time.point)) %>% 
+  #mutate(time.point = ifelse(sample.id == 'LBT005' & treatment == 'Control' & time.point == 48, 16, time.point)) %>% 
+  #dplyr::filter(time.point == 16) %>% 
+  left_join(df_data_testing %>% select(sample.id:OID, predicted.celltype)) %>% gather(marker, value, CD24:Vimentin)
+
+for(i in unique(df_data_all$marker)){
+  print(i)
+  tmp_plot <- df_data_all %>% 
+    filter(marker == i) %>% 
+    # group_by(sample.id, treatment, time.point, predicted.celltype) %>% 
+    # summarise(M = mean(value), S = sd(value)) %>% 
+    # ungroup() %>% 
+    mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+  print(ggplot(tmp_plot, aes(value, color = treatment)) + 
+          # geom_col(position = 'dodge') + 
+          geom_density() +
+          ggtitle(i) +
+          # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+          facet_grid(predicted.celltype~sample.id, scales = 'free') + 
+          theme_bw() + 
+          theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)))
+}
+
+tmp_csv <- df_data_all %>% 
+  select(sample.id:OID, predicted.celltype) %>% 
+  unique()
+
+write.csv2(tmp_csv, file.path(wd, 'Data', 'tumor_subtype_annotations_Sox2P.csv'), row.names = FALSE)
+
+```
+
+Diffusion map and trajectory.
+
+```{r diffusion map, fig.height = 8, fig.width = 8,eval=FALSE}
+
+library(slingshot)
+library(destiny)
+
+tmp_testing_sample <- df_data_testing %>% 
+  group_by(predicted.celltype) %>%
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  mutate(P = sqrt(N)) %>% 
+  mutate(M = sum(P)) %>% 
+  mutate(S = 1000/M*P)
+  
+tmp_data_testing <- df_data_testing %>% 
+  left_join(tmp_testing_sample %>% select(predicted.celltype, S)) %>% 
+  # mutate(CCNB1 = ifelse(CCNB1 < -3, -3, ifelse(CCNB1 > 3, 3, CCNB1))) %>% 
+  # mutate(IdU = ifelse(IdU < -3, -3, ifelse(IdU > 3, 3, IdU))) %>% 
+  # mutate(Ki67 = ifelse(Ki67 < -3, -3, ifelse(Ki67 > 3, 3, Ki67))) %>% 
+  # mutate(pH3 = ifelse(pH3 < -3, -3, ifelse(pH3 > 3, 3, pH3))) %>% 
+  # mutate(pRB1 = ifelse(pRB1 < -3, -3, ifelse(pRB1 > 3, 3, pRB1))) %>% 
+  group_by(predicted.celltype) %>%
+  sample_n(S) %>% 
+  ungroup() 
+
+tmp_matrix <- tmp_data_testing %>% 
+  select(CD24:Vimentin)
+
+cl <- tmp_data_testing$predicted.celltype %>% as.factor()
+# tmp_pos <- which(duplicated(tmp_matrix), arr.ind = TRUE)
+# if(nrow(tmp_pos) > 0){
+#   tmp_data_testing <- tmp_data_testing[-tmp_pos[,1],]
+#   tmp_matrix <- tmp_matrix[-tmp_pos[,1],]
+#   cl <- cl[-tmp_pos[,1]]
+# }
+
+dm <- DiffusionMap(tmp_matrix)
+
+tmp_data_testing <- tmp_data_testing %>% 
+  mutate(DC1 = dm$DC1, DC2 = dm$DC2, DC3 = dm$DC3)
+
+library(plotly)
+plot_ly(x=tmp_data_testing$DC1, y=tmp_data_testing$DC2, z=tmp_data_testing$DC3, type="scatter3d", mode="markers", color=tmp_data_testing$predicted.celltype, size = 1)
+
+```
+
+## Dimensionality Reduction
+
+```{r filter dataset,eval=FALSE}
+
+df_data_testing <- df_data_testing %>% filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  filter(batch != 1, sample.id != 'Astrocytes') %>% 
+  mutate(time.point = ifelse(sample.id == 'BT360' & treatment == 'Control' & time.point == 48, 16, time.point)) %>% 
+  mutate(time.point = ifelse(sample.id == 'LBT005' & treatment == 'Control' & time.point == 48, 16, time.point))
+
+```
+
+```{r cell sampling, eval = FALSE}
+
+tmp_data <- df_data_testing %>% 
+  group_by(predicted.celltype) %>% 
+  mutate(N = n()) %>% 
+  mutate(P = 100*log(N)) %>% 
+  mutate(P = ifelse(P > N, N, P)) %>% 
+  sample_n(P) %>% 
+  ungroup()
+
+tmp_dr <- tmp_data %>% select(phenomarkers)
+
+library(umap)
+# custom.config <- umap.defaults
+# 
+# custom.config$metric <- 'cosine'
+# custom.config$n_neighbors <- 10
+
+tmp_umap <- umap(tmp_dr) #, custom.config)
+tmp_tsne <- Rtsne::Rtsne(tmp_dr + matrix(data = rnorm(n = nrow(tmp_dr)*ncol(tmp_dr), mean = 1e-06, sd = 1e-06), nrow = nrow(tmp_dr), ncol = ncol(tmp_dr)), perplexity = 20)
+tmp_pca <- prcomp(tmp_dr)
+
+tmp_data <- tmp_data %>% 
+  mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+  mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+  mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) %>% 
+  filter(uMap2 > -10, uMap1 > -10, uMap2 < 10, uMap1 < 10)
+
+write.csv2(tmp_data, file.path(wd, 'Results', 'phenotypic_identification_umap_Sox2P.csv'), row.names = FALSE)
+
+```
+
+```{r dimensionality reduction, fig.height = 8, fig.width = 8}
+
+tmp_data <- read.csv2(file.path(wd, 'Results', 'phenotypic_identification_umap_Sox2P.csv'), stringsAsFactors = FALSE)
+
+tmp_centroids <- tmp_data %>% 
+  group_by(predicted.celltype) %>% 
+  summarise(tsne1 = median(tsne1), tsne2 = median(tsne2), uMap1 = median(uMap1), uMap2 = median(uMap2), PC1 = median(PC1), PC2 = median(PC2)) %>% 
+  ungroup()
+
+ggplot(tmp_data, aes(tsne1, tsne2, color = predicted.celltype)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  geom_label(data = tmp_centroids, aes(tsne1, tsne2, label = predicted.celltype), col = 'black') +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(legend.position = 'none')
+
+ggplot(tmp_data, aes(uMap1, uMap2, color = predicted.celltype)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  # geom_label(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), col = 'black') +
+  geom_label(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype, col = predicted.celltype)) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(legend.position = 'none')
+
+#png(file.path(wd, 'paper_figures', 'uMap_predicted_celltype.png'), width = 6, height = 6, units = 'in', res = 300)
+ggplot(tmp_data, aes(uMap1, uMap2, color = predicted.celltype)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  coord_equal() +
+  ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), size = 7) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16)) +
+  theme(legend.position = 'none')
+#dev.off()
+
+ggplot(tmp_data, aes(PC1, PC2, color = predicted.celltype)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  geom_label(data = tmp_centroids, aes(PC1, PC2, label = predicted.celltype), col = 'black') +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(legend.position = 'none')
+
+```
+
+```{r uMap patients}
+
+tmp_data <- tmp_data %>% mutate(sample_id = paste(sample.id, region, treatment, sep = '_'))
+
+tmp_centroids <- tmp_data %>% 
+  group_by(sample.id) %>% 
+  summarise(tsne1 = median(tsne1), tsne2 = median(tsne2), uMap1 = median(uMap1), uMap2 = median(uMap2), PC1 = median(PC1), PC2 = median(PC2)) %>% 
+  ungroup()
+
+ggplot(tmp_data, aes(uMap1, uMap2, color = sample.id)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  coord_equal() +
+  # ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), size = 7) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16)) +
+  theme(legend.position = 'none')
+
+#png(file.path(wd,'paper_figures', 'uMap_sample_id.png'), width = 6, height = 6, units = 'in', res = 300)
+ggplot(tmp_data, aes(uMap1, uMap2, color = sample.id)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  coord_equal() +
+  ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = sample.id), size = 7) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16)) +
+  theme(legend.position = 'none')
+  # theme(legend.position = 'none')
+#dev.off()
+
+# tmp_centroids <- tmp_data %>% 
+#   group_by(sample_type) %>% 
+#   summarise(tsne1 = median(tsne1), tsne2 = median(tsne2), uMap1 = median(uMap1), uMap2 = median(uMap2), PC1 = median(PC1), PC2 = median(PC2)) %>% 
+#   ungroup()
+
+ggplot(tmp_data, aes(uMap1, uMap2, color = sample.id)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  coord_equal() +
+  # geom_label(data = tmp_centroids, aes(uMap1, uMap2, label = sample_type), size = 7, show.legend = FALSE) +
+  # ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = sample_type), size = 7) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 25), axis.title.y = element_text(size = 25)) +
+  theme(legend.title = element_text(size = 20), legend.text = element_text(size = 15))
+  # theme(legend.position = 'none')
+
+```
+
+```{r uMap markers}
+
+tmp_plot <- tmp_data %>% 
+  # select('ID', 'OID', 'uMap1', 'uMap2', phenomarkers) %>% 
+  gather(marker, value, phenomarkers) %>% 
+  filter(marker %in% phenomarkers) #-ID, OID, -uMap1, -uMap2)
+
+#png(file.path(wd, 'paper_figures', 'uMap_markers_Sox2P.png'), width = 16, height = 8, units = 'in', res = 300)
+ggplot(tmp_plot, aes(uMap1, uMap2, color = value, alpha = value)) +
+  geom_point(size = 1) +
+  theme_bw() +
+  coord_equal() +
+  # ggrepel::geom_label_repel(data = tmp_centroids, aes(uMap1, uMap2, label = predicted.celltype), size = 7) +
+  facet_wrap(~marker, nrow = 2, switch = 'y') + 
+  scale_color_gradient2(low = 'royalblue', mid = 'white', midpoint = 0, high = 'firebrick') +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16), strip.text = element_text(size = 12)) +
+  theme(legend.position = 'none')
+#dev.off()
+
+```
+
+```{r cytometry plot,fig.width=12,fig.height=8}
+
+tmp_table <- df_data_testing %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, treatment, region) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2)) %>% select(-M, -N) %>% spread(predicted.celltype, P, fill = 0)
+
+tmp_plot <- tmp_table %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) 
+  # mutate(time.point = factor(time.point, levels = c(8, 16, 24, 48)))
+
+png(file.path(wd, 'paper_figures', 'tumor_subtype_cyometry_Sox2P.png'), width = 12, height = 12, units = 'in', res = 300)
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(legend.position = 'none') + xlab(NULL) + ylab('Relative proportion (%)')
+dev.off()
+
+```
+
+Plots for G0G1:
+```{r, G0G1 graphs, fig.width=16,fig.height=8, echo=FALSE}
+
+df_g0g1<- read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations.csv'), stringsAsFactors = FALSE)
+
+df_annotated <- read.csv2(file.path(wd, 'Data', 'data_annotated_tumor_subtypes_Sox2P.csv'), stringsAsFactors = FALSE)
+
+df_temp <- df_annotated %>% left_join(df_g0g1)
+df_data_testing <- df_temp %>% filter(cell_cycle_phase=='G0G1')
+
+
+df_tmp <- df_data_testing  %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N= n()) %>% ungroup() %>% spread(predicted.celltype, N, fill = 0)
+
+
+
+tmp_table <- table(df_data_testing$predicted.celltype) %>% as.data.frame() %>% mutate(Freq = Freq) %>%mutate(P = 100*Freq/sum(Freq)) %>% arrange(-P)
+DT::datatable(tmp_table)
+
+
+tmp_table <- df_data_testing %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>% 
+  mutate(P = round(100*N/M, 2))  %>% spread(predicted.celltype, P, fill = 0)
+# 
+tmp_table <- df_data_testing %>% group_by(sample.id, region, treatment, predicted.celltype) %>% summarise(N = n()) %>% ungroup() %>% group_by(sample.id, region, treatment) %>% mutate(M = sum(N)) %>% ungroup() %>%
+  mutate(P = round(100*N/M, 2)) %>% select(-M, -N) %>% spread(predicted.celltype, P, fill = 0)
+
+tmp_plot <- tmp_table %>% gather(predicted.celltype, P, AC:OPC) %>% mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT'))) 
+  # mutate(time.point = factor(time.point, levels = c(8, 16, 24, 48)))
+tmp_plot2<-tmp_plot %>% mutate(ID=paste(sample.id,region,sep='_'))
+
+# tmp_plot2$sample.id <- factor(tmp_plot$sample.id,      # Reordering group factor levels
+#                          levels = c("UKK011", "LBT239","LBT240", "LBT242", "UKK012", "UKK025","LBT379", "LBT399", "UKK023", "LBT250" , "LBT273","LBT221","LBT231","LBT252","LBT268","LBT293","UKK021","LBT247"))
+
+
+
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(tmp_plot, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~sample.id) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(tmp_plot2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~ID, scales = 'free') + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(tmp_plot2, aes(treatment, P, fill = treatment)) + geom_col(position = 'dodge') + facet_grid(predicted.celltype~ID) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+DT::datatable(tmp_table, filter = 'top')
+write.csv2(tmp_table, file.path(wd, 'Results', 'cellular_composition_Sox2P_G0G1.csv'), row.names = FALSE)
+```
+
+```{r, chisauared test and p-values}
+
+df_temp_control <- tmp_table %>% group_by(sample.id,region) %>% mutate(ID= paste(sample.id, region,sep='_')) %>% gather(cell.type,per,AC:NPC) %>% mutate(per=per/100)
+
+df_new <- NULL
+for (i in unique(df_temp_control$ID)){
+  a <- df_temp_control %>%filter(ID==i& treatment=='Control') %>% spread(cell.type,per) %>% select(AC:OPC) %>% as.numeric()
+  b <- df_temp_control %>% filter(ID==i&treatment == 'AMG232') %>% spread(cell.type,per) %>% select(AC:OPC) %>% as.numeric()
+  df_neww <- df_temp_control %>% filter(ID==i) %>% mutate(pvalue = chisq.test(a,b)$p.value)
+  df_new <- rbind(df_new,df_neww)
+}
+
+a <- df_tmp %>% filter(treatment!='RT') %>% gather(predicted.celltype, N, AC:OPC)%>%filter(sample.id=='LBT250') %>% group_by(sample.id, region) %>% summarise(amg.vs.ctr = chisq.test(N[treatment == 'AMG232'], N[treatment == 'Control'])$p.value) %>% ungroup()
+
+df_temp_tr <- df_tmp %>% filter(treatment!='Control') %>% group_by(sample.id,region, treatment)  %>% 
+  mutate(p_value = chisq.test(filter(df_temp_control,sample.id=)))
+
+# 
+# > library(dplyr)
+# > library(broom)
+# > iris %>% group_by(Species) %>% do(tidy(lm(Sepal.Length ~ Sepal.Width, .)))
+
+# GGally::ggpairs(iris, aes(color = Species))
+
+
+
+```

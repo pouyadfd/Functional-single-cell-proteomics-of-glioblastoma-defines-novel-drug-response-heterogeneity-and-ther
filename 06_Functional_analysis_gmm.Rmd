@@ -1,0 +1,2996 @@
+---
+title: 'Cluster Stability (Phenotypic Markers)'
+author: "Asier Antoranz"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, cache = FALSE, cache.lazy = FALSE, fig.align = 'center')
+```
+
+## Introduction
+
+```{r LoadData}
+
+library(tidyverse)
+library(RColorBrewer)
+
+wd <- file.path(getwd())
+
+df_data_all <- read.csv2(file.path(wd, 'Data', 'df_data_norm.csv'), stringsAsFactors = FALSE) %>% 
+  filter(label != 'BC') %>% 
+  filter(batch != 1) %>% 
+  filter(sample.id != 'Astrocytes') %>% 
+  mutate(time.point = ifelse(sample.id == 'BT360' & treatment == 'Control' & time.point == 48, 16, time.point)) %>% 
+  mutate(time.point = ifelse(sample.id == 'LBT005' & treatment == 'Control' & time.point == 48, 16, time.point)) %>% 
+  # filter(!(sample.id %in% c('2080', '5050', '8020'))) %>% 
+  mutate(treatment = ifelse(sample.id == 'LBT062', plyr::mapvalues(treatment, from = c('Control', 'AMG232', 'RT'), to = c('Control', 'RT', 'AMG232')), treatment)) %>% 
+  bind_rows(read.csv2(file.path(wd, 'Data', 'df_data.csv'), stringsAsFactors = FALSE) %>% 
+              filter(label != 'BC') %>% 
+              filter(batch == 1) %>% 
+              mutate(value = asinh(value)) %>% 
+              filter(sample.id != 'Astrocytes')) %>% 
+  select(-tmp_alpha, -OVL, -OVL.ref)
+
+df_celltypes <- read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations.csv'), stringsAsFactors = FALSE) %>% 
+  bind_rows(read.csv2(file.path(wd, 'Data', 'cell_cycle_annotations_batch1.csv'), stringsAsFactors = FALSE))
+df_tumortypes <- read.csv2(file.path(wd, 'Data', 'tumor_subtype_annotations.csv'), stringsAsFactors = FALSE) %>% 
+  bind_rows(read.csv2(file.path(wd, 'Data', 'tumor_subtype_annotations_batch1.csv'), stringsAsFactors = FALSE))
+
+df_data_all <- df_data_all %>% 
+  select(sample.id:OID, marker, value) %>% 
+  group_by(sample.id, treatment, time.point, label, batch, OID, marker) %>% 
+  summarise(value = max(value)) %>% 
+  ungroup() %>% 
+  left_join(df_celltypes) %>% 
+  left_join(df_tumortypes)
+
+df_data <- df_data_all %>% filter(time.point == 16)
+
+```
+
+Density plots
+
+```{r density plot per marker, fig.height = 8, fig.width = 16}
+
+tmp_plot <- df_data %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # filter(sample.id != 'LBT005') %>% 
+  filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+ggplot(tmp_plot, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(tmp_plot %>% filter(treatment == 'Control', value > 0), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+png(filename = file.path(wd, 'paper_figures', 'density_plots.png'), width = 12, height = 8, units = 'in', res = 300)
+ggplot(tmp_plot, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position = 'bottom')
+dev.off()
+
+ggplot(tmp_plot %>% filter(marker == 'p53', treatment == 'Control', value > 0), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  # geom_density() +
+  geom_freqpoly() + 
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  # facet_grid(marker~sample.id, scales = 'free') + 
+  facet_wrap(~sample.id, nrow = 3) +
+  scale_y_log10() +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+a <- tmp_plot %>% filter(sample.id == 'BT248', marker %in% c('MDM2', 'p21', 'p53', 'pH2AX')) %>% 
+  mutate(marker = factor(marker, levels = c('pH2AX', 'MDM2', 'p53', 'p21')))
+png(filename = file.path(wd, '..', 'paper_figures', 'density_plots_BT248_MDM2_p21_p53_pH2AX.png'), width = 3, height = 4, units = 'in', res = 300)
+ggplot(a, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) #+
+  # theme(legend.position = 'bottom')
+dev.off()
+
+a <- tmp_plot %>% filter(sample.id %in% c('BT333', '8020', '5050', '2080', 'BT360'), marker %in% c('MDM2', 'p21', 'p53', 'pH2AX')) %>% 
+  mutate(sample.id = factor(sample.id, levels = c('BT333', '2080', '5050', '8020', 'BT360'))) %>% 
+  mutate(marker = factor(marker, levels = c('pH2AX', 'MDM2', 'p53', 'p21')))
+png(filename = file.path(wd, '..', 'paper_figures', 'density_plots_mixed_samples_MDM2_p21_p53_pH2AX.png'), width = 5, height = 4, units = 'in', res = 300)
+ggplot(a, aes(value, color = treatment)) + cytometry_tumor_subtypes
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position = 'bottom')
+dev.off()
+
+```
+
+Deconvolve the control distribution in 2 gaussians using GMM
+
+First decide which gaussians need to be separated
+
+```{r GMM criterion}
+
+tmp_rank <- tmp_plot %>% filter(marker == 'p53', treatment == 'Control') %>% group_by(sample.id) %>% summarise(M = mean(value), S = sd(value)) %>% ungroup() %>% mutate(CV = S/M) %>% mutate(rank.CV = rank(CV), rank.S = rank(S)) %>% arrange(rank.CV) %>% mutate(sample.id = factor(sample.id, levels = sample.id))
+
+ggplot(tmp_rank, aes(sample.id, S)) + geom_col() + theme_bw()
+ggplot(tmp_rank, aes(rank.S, S)) + geom_point() + theme_bw()
+ggplot(tmp_rank, aes(sample.id, CV)) + geom_col() + theme_bw()
+ggplot(tmp_rank, aes(rank.CV, CV)) + geom_point() + theme_bw()
+
+```
+
+```{r GMM, fig.height = 5, fig.width = 12}
+
+library(mixtools)
+
+df_gmm <- data.frame()
+for(i in unique(df_data$sample.id)){
+  print(i)
+  # for(j in unique(df_data$marker)){
+  for(j in c('p53')){
+    tmp_data <- df_data %>% filter(sample.id == i, marker == j, treatment == 'Control', value > 0) #%>% 
+    tmp_gmm <- normalmixEM(tmp_data$value)
+    df_gmm <- df_gmm %>% bind_rows(data.frame(sample.id = i, marker = j, mu = c(tmp_gmm$mu[1], tmp_gmm$mu[2]), sigma = c(tmp_gmm$sigma[1], tmp_gmm$sigma[2]), G = c('gaussian01', 'gaussian02')))
+  }
+}
+
+df_gmm <- df_gmm %>% mutate(Q95 = qnorm(0.05, mu, sigma, lower.tail = FALSE))
+df_gmm <- df_gmm %>% group_by(sample.id, marker) %>% filter(mu == min(mu)) %>% ungroup()
+df_dummy_data <- data.frame()
+
+for(i in unique(df_gmm$sample.id)){
+  tmp_gmm <- df_gmm %>% filter(sample.id == i)
+  tmp_dummy_data <- rnorm(1e4, tmp_gmm$mu, tmp_gmm$sigma)
+  df_dummy_data <- df_dummy_data %>% bind_rows(data.frame(sample.id = i, value = tmp_dummy_data))
+}
+
+```
+
+For every cell/marker, we calculate the probability of belonging to the control distribution. Two tails: P(value>red) P(value<red)
+
+```{r plot per marker}
+
+tmp_data <- df_data %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # filter(sample.id != 'LBT005') %>% 
+  group_by(marker, sample.id, time.point, label, batch) %>% 
+  mutate(M = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         S = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE),
+         p.high = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = FALSE),
+         p.low = pnorm(value, mean = mean(value[treatment == 'Control' & value > 0], na.rm = TRUE), sd = sd(value[treatment == 'Control' & value > 0], na.rm = TRUE), lower.tail = TRUE)) %>% 
+  ungroup()
+
+# ggplot(tmp_data, aes(p.high, fill = treatment), alpha = 0.2) + geom_density() + theme_bw() + facet_grid(sample.id ~ marker, scales = 'free')
+plot(density(tmp_data$p.high))
+plot(density(tmp_data$p.low))
+
+```
+
+The distribution of p-values looks more or less uniform -> good QC.
+
+We define as induction for a marker those cells with a p-value < 0.025 for either tail. p-low < 0.025 (-1), p.high < 0.025 (+1), else 0.
+
+```{r dichotomize induction}
+
+tmp_data <- tmp_data %>% 
+  mutate(group = ifelse(p.high < 0.05, 1, 0))
+
+tmp_data <- tmp_data %>% 
+  left_join(df_gmm) %>% 
+  mutate(group2 = ifelse(value > Q95, 1, 0))
+
+tmp_data <- tmp_data %>% 
+  mutate(group = ifelse(is.na(group2), group, group2)) %>% 
+  select(sample.id:group)
+
+tmp_plot <- tmp_data %>% 
+  # filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX')) %>% 
+  filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+tmp_cutoffs <- tmp_plot %>% 
+  filter(treatment == 'Control') %>% 
+  filter(group == 1) %>% 
+  group_by(sample.id, marker) %>% 
+  summarise(value = min(value)) %>% 
+  ungroup()
+
+tmp_plot <- tmp_plot%>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+tmp_cutoffs <- tmp_cutoffs %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+cutoffs <- read.csv2(file.path(wd,'cutoffs.csv'),stringsAsFactors = FALSE) %>% rename(cut =value)
+temp <- tmp_plot %>% left_join(cutoffs)
+
+ggplot(tmp_plot, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_cutoffs, aes(xintercept = value), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+png(filename = file.path(wd, 'paper_figures', 'density_plots_cutoff_gmm.png'), width = 12, height = 7, units = 'in', res = 300)
+ggplot(tmp_plot, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_cutoffs, aes(xintercept = value), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position = 'bottom')
+dev.off()
+
+png(filename = file.path(wd, 'paper_figures', 'density_plots_cutoff_gmm_new.png'), width = 12, height = 7, units = 'in', res = 300)
+ggplot(temp, aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = temp, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~sample.id, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position = 'bottom')
+dev.off()
+
+temp2 <- temp %>% mutate(group = ifelse(value>cut,1,0))
+write.csv2(temp2, file.path(wd,'DrugResponseForCelllines.csv'),row.names = FALSE)
+
+```
+
+
+## AMG
+
+#changing figures:
+```{r biology panel}
+tmp_data <- read.csv2(file.path(wd, 'DrugResponseForCelllines.csv'), stringsAsFactors = FALSE)
+tmp <- tmp_data %>%select(sample.id, treatment, time.point, label,batch,OID,marker,cell_cycle_phase,predicted.celltype,group) %>%  spread(marker,group)
+tmp_amg <- tmp %>% filter(time.point==16& treatment != 'RT')
+
+tmp_amg_delta <- tmp_amg%>%
+  mutate(p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21_', p21 )) %>% 
+  mutate(Sample = paste(sample.id, treatment,sep='_')) 
+
+
+
+tmp_amg_delta <- tmp_amg_delta %>% filter(sample.id %in% c('BT360', '8020','5050', '2080','BT333')) 
+
+tmp_amg_delta <- tmp_amg_delta %>% mutate(ID2=ifelse(ID=="p21_high","responsive","non-responsive"))
+table(tmp_amg_delta$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+ tmp_amg_plot <- tmp_amg_delta 
+
+
+tmp_table <- table(tmp_amg_plot[c('Sample', 'ID2')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+tmp_table2 <- tmp_table %>% separate(Sample,c('sample.id' , 'treatment'), sep='_') %>% 
+  rename(Sample= sample.id) %>% 
+  group_by(Sample,ID2) %>% 
+  mutate(dif = ifelse(ID2 == 'responsive', max(Freq) - min(Freq), min(Freq)-max(Freq))) %>% 
+  select(-treatment,-Freq) %>% 
+  unique() %>% 
+  ungroup()
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+colors2 <- c("#253494","#800026")
+
+colors2 <- c("#800026")
+# tmp_table_arr <- tmp_table2 %>% #group_by(Diagnosis) %>% 
+#    arrange(desc(dif))# %>% ungroup()
+# 
+# tmp_table2<- tmp_table2 %>% mutate(Sample = factor(Sample, levels = unique(tmp_table_arr$Sample)))
+#BT333, 2080, 5050, 8020 and BT360
+tmp_table2 <- tmp_table2 %>% mutate(Sample = factor(Sample , levels = c('BT333', '2080','5050', '8020','BT360')))
+
+p<- ggplot(tmp_table2 %>% filter(ID2=='responsive'), aes(fill=ID2, y=Sample, x=dif)) + 
+     geom_bar(position="stack", stat="identity",width = 0.7)+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+
+png(file.path(wd, 'paper_figures', 'AMG_sensitive_sroted_one-sided-celllines.png'), width = 6, height = 3, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+```
+
+
+```{r,new figures one sided RT}
+tmp_rt <- tmp %>% filter(time.point==16& treatment != 'AMG232')
+
+
+tmp_rt_delta <- tmp_rt%>%
+  mutate(p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21_', p21 )) %>%  
+  mutate(Sample = paste(sample.id, treatment,sep='_')) 
+
+
+
+tmp_rt_delta <- tmp_rt_delta %>% filter(sample.id %in% c('BT360', '8020','5050', '2080','BT333')) 
+
+tmp_rt_delta <- tmp_rt_delta %>% mutate(ID2=ifelse(ID=="p21_high","responsive","non-responsive"))
+table(tmp_rt_delta$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+ tmp_rt_plot <- tmp_rt_delta 
+
+
+tmp_table <- table(tmp_rt_plot[c('Sample', 'ID2')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+tmp_table2 <- tmp_table %>% separate(Sample,c('sample.id' , 'treatment'), sep='_') %>% 
+  rename(Sample= sample.id) %>% 
+  group_by(Sample,ID2) %>% 
+  mutate(dif = ifelse(ID2 == 'responsive', max(Freq) - min(Freq), min(Freq)-max(Freq))) %>% 
+  select(-treatment,-Freq) %>% 
+  unique() %>% 
+  ungroup()
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+colors2 <- c("#253494","#800026")
+
+colors2 <- c("#800026")
+# tmp_table_arr <- tmp_table2 %>% #group_by(Diagnosis) %>% 
+#    arrange(desc(dif))# %>% ungroup()
+# 
+# tmp_table2<- tmp_table2 %>% mutate(Sample = factor(Sample, levels = unique(tmp_table_arr$Sample)))
+
+tmp_table2 <- tmp_table2 %>% mutate(Sample = factor(Sample , levels = c('BT333', '2080','5050', '8020','BT360')))
+
+
+p<- ggplot(tmp_table2 %>% filter(ID2=='responsive'), aes(fill=ID2, y=Sample, x=dif)) + 
+     geom_bar(position="stack", stat="identity",width = 0.7)+
+  ggtitle("RT and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+
+png(file.path(wd, 'paper_figures', 'AMG_sensitive_sroted_one-sided-celllinesRT.png'), width = 6, height = 3, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+
+```
+```{r,second part of new figures}
+tmp <- tmp_data %>%select(sample.id, treatment, time.point, label,batch,OID,marker,cell_cycle_phase,predicted.celltype,group) %>%  spread(marker,group)
+tmp_amg <- tmp %>% filter(treatment != 'RT')
+
+tmp_amg_delta <- tmp_amg%>%
+  mutate(p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21_', p21 )) %>% 
+  mutate(Sample = paste(sample.id, treatment,sep='_')) 
+
+
+
+tmp_amg_delta <- tmp_amg_delta %>% filter(!sample.id %in% c('8020','5050', '2080')) 
+
+tmp_amg_delta <- tmp_amg_delta %>% mutate(ID2=ifelse(ID=="p21_high","responsive","non-responsive"))
+table(tmp_amg_delta$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+ tmp_amg_plot <- tmp_amg_delta 
+
+
+tmp_table <- table(tmp_amg_plot[c('Sample', 'ID2')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+tmp_table2 <- tmp_table %>% separate(Sample,c('sample.id' , 'treatment'), sep='_') %>% 
+  rename(Sample= sample.id) %>% 
+  group_by(Sample,ID2) %>% 
+  mutate(dif = ifelse(ID2 == 'responsive', max(Freq) - min(Freq), min(Freq)-max(Freq))) %>% 
+  select(-treatment,-Freq) %>% 
+  unique() %>% 
+  ungroup()
+
+
+tmp_table_arr <- tmp_table2 %>% #group_by(Diagnosis) %>% 
+   arrange(desc(dif))# %>% ungroup()
+
+tmp_table2<- tmp_table2 %>% mutate(Sample = factor(Sample, levels = unique(tmp_table_arr$Sample)))
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+colors2 <- c("#253494","#800026")
+
+colors2 <- c("#800026")
+#tmp_table2<- tmp_table2 %>% mutate(Sample = factor(Sample, levels = c('BT333','2080','5050','8020','BT360')))
+
+p<- ggplot(tmp_table2 %>% filter(ID2=='responsive') %>% arrange(desc(dif)), aes(fill=ID2, y=Sample, x=dif)) + 
+     geom_bar(position="stack", stat="identity",width = 0.7)+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+
+png(file.path(wd, 'paper_figures', 'AMG_sensitive_sroted_one-sided-celllines2.png'), width = 6, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+```
+
+
+```{r,new figures one sided RT}
+tmp_rt <- tmp %>% filter(time.point==16& treatment != 'AMG232')
+
+
+tmp_rt_delta <- tmp_rt%>%
+  mutate(p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21_', p21 )) %>%  
+  mutate(Sample = paste(sample.id, treatment,sep='_')) 
+
+
+
+tmp_rt_delta <- tmp_rt_delta %>% filter(!sample.id %in% c('8020','5050', '2080')) 
+
+tmp_rt_delta <- tmp_rt_delta %>% mutate(ID2=ifelse(ID=="p21_high","responsive","non-responsive"))
+table(tmp_rt_delta$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+ tmp_rt_plot <- tmp_rt_delta 
+
+
+tmp_table <- table(tmp_rt_plot[c('Sample', 'ID2')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+tmp_table2 <- tmp_table %>% separate(Sample,c('sample.id' , 'treatment'), sep='_') %>% 
+  rename(Sample= sample.id) %>% 
+  group_by(Sample,ID2) %>% 
+  mutate(dif = ifelse(ID2 == 'responsive', max(Freq) - min(Freq), min(Freq)-max(Freq))) %>% 
+  select(-treatment,-Freq) %>% 
+  unique() %>% 
+  ungroup()
+
+
+tmp_table_arr <- tmp_table2 %>% #group_by(Diagnosis) %>% 
+   arrange(desc(dif))# %>% ungroup()
+
+tmp_table2<- tmp_table2 %>% mutate(Sample = factor(Sample, levels = unique(tmp_table_arr$Sample)))
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+colors2 <- c("#253494","#800026")
+
+colors2 <- c("#800026")
+#tmp_table2<- tmp_table2 %>% mutate(Sample = factor(Sample, levels = c('BT333','2080','5050','8020','BT360')))
+
+p<- ggplot(tmp_table2 %>% filter(ID2=='responsive'), aes(fill=ID2, y=Sample, x=dif)) + 
+     geom_bar(position="stack", stat="identity",width = 0.7)+
+  ggtitle("RT and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 15))+
+  theme(legend.text = element_text(size=15))
+
+
+png(file.path(wd, 'paper_figures', 'RT_sensitive_sroted_one-sided-celllinesRT2.png'), width = 6, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+```
+### Panel based on biology
+
+MDM2, p21, p53
+
+```{r biology panel}
+tmp_data <- read.csv2(file.path(wd, 'DrugResponseForCelllines.csv'), stringsAsFactors = FALSE)
+tmp_dictionary <- read.csv2(file.path(wd, 'Data', 'Metatable_PDCL.csv'), stringsAsFactors = FALSE, sep = '\t', dec = '.') %>% 
+  rename(treatment = Treatment, time.point = Timepoint, label = BC.Sample, batch = Batch, p53.mut = p53, response = Response) %>% 
+  mutate(AUC = as.numeric(AUC), LogIC50 = as.numeric(LogIC50), MaxInhibition = as.numeric(MaxInhibition), Inhibition = as.numeric(Inhibition))
+tmp_max_inhib <- read.csv2(file.path(wd, 'Data', 'inhibition_At_25.csv'), stringsAsFactors = FALSE, dec = '.') %>% 
+  mutate(treatment = 'AMG232') %>% 
+  mutate(sample.id = gsub(' ', '', sample.id))
+
+tmp_dictionary <- tmp_dictionary %>% 
+  select(-MaxInhibition) %>% 
+  left_join(tmp_max_inhib)
+
+tmp_amg <- tmp_data %>% 
+  filter(treatment != 'RT') %>%
+  filter(marker %in% c('MDM2', 'p21', 'p53')) %>% 
+  mutate(group = plyr::mapvalues(group, from = c(0,1), to = c('low', 'high'))) %>% 
+  group_by(sample.id, treatment, OID) %>% 
+  summarise(cell_cycle_phase = unique(cell_cycle_phase), predicted.celltype = unique(predicted.celltype), ID = paste(marker, group, sep = '_', collapse = '_')) %>% 
+  ungroup() 
+
+tmp_table <- tmp_amg %>% 
+  group_by(sample.id, treatment, ID) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition) %>% filter(treatment == 'AMG232') %>% unique()) %>% 
+  # mutate(D = AMG232-Control) %>% 
+  mutate(D = AMG232) %>% 
+  select(sample.id, ID, D, response:Inhibition) %>% 
+  spread(ID, D, fill = 0) %>% 
+  select(-p53.mut) %>% 
+  unique()
+
+tmp_plot <- tmp_table %>% 
+  # mutate(sample.identifier = paste(response, sample.id)) %>%
+  mutate(sample.identifier = sample.id) %>% 
+  arrange(-MDM2_low_p21_low_p53_low) %>% 
+  mutate(sample.identifier = factor(sample.identifier, levels = unique(sample.identifier))) %>% 
+  gather(ID, P, MDM2_high_p21_high_p53_high:MDM2_low_p21_low_p53_low) %>% 
+  unique() %>% 
+  group_by(sample.identifier, ID) %>% 
+  summarise(P = mean(P)) %>% 
+  ungroup()
+
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+dir.create(file.path(wd, 'paper_figures'))
+png(filename = file.path(wd, 'paper_figures', 'AMG_fingerprint_biology.png'), width = 5, height = 5, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(!(sample.identifier %in% c('2080', '5050', '8020'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  xlab(NULL) + 
+  ylab(NULL) + 
+  scale_fill_manual(values=colors2) +
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(nrow=4,byrow=TRUE))
+dev.off()
+
+png(filename = file.path(wd, 'paper_figures', 'AMG_fingerprint_biology_gradient.png'), width = 5, height = 4, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(sample.identifier %in% c('BT333', '2080', '5050', '8020', 'BT360')) %>% 
+         mutate(sample.identifier = factor(sample.identifier, levels = c('BT333', '2080', '5050', '8020', 'BT360'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  xlab(NULL) + 
+  ylab(NULL) + 
+  scale_fill_manual(values=colors2) +
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(nrow=4,byrow=TRUE))
+dev.off()
+
+```
+#######################################################################################################################################################################################################################################
+
+```{r density plot per marker, fig.height = 8, fig.width = 16}
+df_data <- df_data_all %>% dplyr::filter(sample.id == 'BT360')
+copy <-df_data %>% filter(time.point==16,treatment=='Control')
+
+for (i in c(8,24,48)){
+  df_data <- df_data %>% rbind(copy %>% mutate(time.point=i))
+}
+
+tmp_plot <- df_data %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # filter(sample.id != 'LBT005') %>% 
+  filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+tmp_cutoffs <- read.csv2(file.path(wd, 'cutoffs.csv'),stringsAsFactors = FALSE)
+tmp_plot <- tmp_plot %>% left_join(tmp_cutoffs %>% filter(sample.id == 'BT360') %>% rename(cut = value),by=c('marker','sample.id'))
+
+
+tmp_data <- tmp_plot %>% 
+  mutate(group = ifelse(value > cut , 1, 0))
+
+
+tmp_plot <- tmp_data %>% 
+  # filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX')) %>% 
+  filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+# tmp_cutoffs <- tmp_plot %>% 
+#   filter(treatment == 'Control') %>% 
+#   filter(group == 1) %>% 
+#   group_by(sample.id, marker) %>% 
+#   summarise(value = min(value)) %>% 
+#   ungroup()
+
+tmp_plot <- tmp_plot%>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+# tmp_cutoffs <- tmp_cutoffs %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+
+png(filename = file.path(wd, 'paper_figures', 'BT360densityplots.png'), width = 7, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(value>0), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_plot, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~time.point, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+tmp_plot2 <- tmp_plot%>% filter(marker%in%c("pH2AX", "MDM2", "p53", "p21")) %>%  mutate(marker=factor(marker,levels = c("pH2AX", "MDM2", "p53", "p21")))
+# tmp_cutoffs <- tmp_cutoffs %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+
+png(filename = file.path(wd, 'paper_figures', 'BT360densityplots4markers.png'), width = 7, height = 4, units = 'in', res = 300)
+ggplot(tmp_plot2 %>% filter(value>0), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_plot2, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~time.point, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+```
+
+```{r Drugresponse plots for BT360, fig.height = 5, fig.width = 12}
+
+control <- tmp_plot %>% filter(time.point == 16, treatment == 'Control') %>% mutate(time.point='Control')
+
+tmp_plot_amg <- tmp_plot %>% filter(treatment == 'AMG232') %>% rbind(control) #%>% filter(value>0)
+tmp_plot_amg <- tmp_plot_amg %>% select(sample.id:marker,cell_cycle_phase,group) %>% spread(marker,group)
+
+
+tmp_amg <- tmp_plot_amg %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232')) %>% 
+  select(sample.id:OID, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('MDM2',MDM2,'_p53', p53,'_p21', p21  )) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('sample.id','time.point', 'ID')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+p<- ggplot(tmp_table, aes(fill=ID, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Drug Response for BT360-AMG")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))
+  #scale_x_reverse()
+
+png(filename = file.path(wd, 'paper_figures', 'BT360drugresponseAMG.png'), width = 10, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+tmp_table <- table(tmp_plot_amg[c('sample.id','time.point', 'cell_cycle_phase')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+cols <- c('#F03B20','#FEB24C','#FFEDA0',"#800026")
+greengray <- c("#006D2C","#A1D99B","#252525","#BDBDBD")
+
+library("colorspace")
+q4 <- sequential_hcl(4, palette = 'Heat')
+q4[4] <- 'forestgreen'
+tmp_table<- tmp_table %>% mutate(cell_cycle_phase=factor(cell_cycle_phase,levels = c('M','G2','S','G0G1')))
+p<- ggplot(tmp_table, aes(fill=cell_cycle_phase, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Cell Cycle Phase for BT360-AMG")+
+  #scale_fill_manual(values=greengray)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))+scale_fill_manual(values =  c( "G0G1" = '#BDBDBD', 'S'='#A1D99B',"G2"='#006D2C','M' = '#252525'))
+  #scale_x_reverse()
+
+
+png(filename = file.path(wd, 'paper_figures', 'BT360cellcycleAMG.png'), width = 8, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+#################################################RT###########################################################
+df_data <- df_data_all %>% dplyr::filter(sample.id == 'BT360')
+
+
+tmp_plot_rt <- tmp_plot %>% filter(treatment == 'RT') %>% rbind(control) #%>% filter(value>0)
+tmp_plot_rt <- tmp_plot_rt %>% select(sample.id:marker,cell_cycle_phase,group) %>% spread(marker,group)
+
+
+
+
+tmp_rt <- tmp_plot_rt %>% 
+  dplyr::filter(treatment %in% c('Control','RT')) %>% 
+  select(sample.id:OID, p53, p21,pH2AX) #%>% 
+
+
+
+tmp_rt <- tmp_rt %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         pH2AX = plyr::mapvalues(pH2AX, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21,'_p53', p53, '_pH2AX',pH2AX)) 
+
+
+
+table(tmp_rt$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+tmp_table <- table(tmp_rt[c('sample.id','time.point', 'ID')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+p<- ggplot(tmp_table, aes(fill=ID, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Drug Response for BT360-RT")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))
+  #scale_x_reverse()
+
+png(filename = file.path(wd, 'paper_figures', 'BT360drugresponseRT.png'), width = 10, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+tmp_table <- table(tmp_plot_rt[c('sample.id','time.point', 'cell_cycle_phase')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+cols <- c('#F03B20','#FEB24C','#FFEDA0',"#800026")
+greengray <- c("#006D2C","#A1D99B","#252525","#BDBDBD")
+
+tmp_table<- tmp_table %>% mutate(cell_cycle_phase=factor(cell_cycle_phase,levels = c('M','G2','S','G0G1')))
+library("colorspace")
+q4 <- sequential_hcl(4, palette = 'Heat')
+q4[4] <- 'forestgreen'
+p<- ggplot(tmp_table, aes(fill=cell_cycle_phase, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Cell Cycle Phase for BT360 RT")+
+  #scale_fill_manual(values=greengray)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))+scale_fill_manual(values = c( "G0G1" = '#BDBDBD', 'S'='#A1D99B',"G2"='#006D2C','M' = '#252525'))
+  #scale_x_reverse()
+
+
+png(filename = file.path(wd, 'paper_figures', 'BT360cellcycle_RT.png'), width = 8, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+```
+
+
+
+
+
+```{r density plot per marker, fig.height = 8, fig.width = 16}
+df_data <- df_data_all %>% dplyr::filter(sample.id == 'LBT005')
+copy <-df_data %>% filter(time.point==16,treatment=='Control')
+
+for (i in c(8,24,48)){
+  df_data <- df_data %>% rbind(copy %>% mutate(time.point=i))
+}
+
+tmp_plot <- df_data %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # filter(sample.id != 'LBT005') %>% 
+  filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+tmp_cutoffs <- read.csv2(file.path(wd, 'cutoffs.csv'),stringsAsFactors = FALSE)
+tmp_plot <- tmp_plot %>% left_join(tmp_cutoffs %>% filter(sample.id == 'LBT005') %>% rename(cut = value),by=c('marker','sample.id'))
+
+
+tmp_data <- tmp_plot %>% 
+  mutate(group = ifelse(value > cut , 1, 0))
+
+
+tmp_plot <- tmp_data %>% 
+  # filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX')) %>% 
+  filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+# tmp_cutoffs <- tmp_plot %>% 
+#   filter(treatment == 'Control') %>% 
+#   filter(group == 1) %>% 
+#   group_by(sample.id, marker) %>% 
+#   summarise(value = min(value)) %>% 
+#   ungroup()
+
+tmp_plot <- tmp_plot%>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+# tmp_cutoffs <- tmp_cutoffs %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+
+png(filename = file.path(wd, 'paper_figures', 'LBT005densityplots.png'), width = 7, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(value>0), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_plot, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~time.point, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+
+tmp_plot2 <- tmp_plot%>% filter(marker%in%c("pH2AX", "MDM2", "p53", "p21")) %>%  mutate(marker=factor(marker,levels = c("pH2AX", "MDM2", "p53", "p21")))
+# tmp_cutoffs <- tmp_cutoffs %>% mutate(marker=factor(marker,levels = c("pATM", "pH2AX", "MDM2", "p53", "p21", "BAX", "CC3")))
+
+png(filename = file.path(wd, 'paper_figures', 'LBT005densityplots4markers.png'), width = 7, height = 4, units = 'in', res = 300)
+ggplot(tmp_plot2 %>% filter(value>0), aes(value, color = treatment)) + 
+  # geom_col(position = 'dodge') + 
+  geom_density() +
+  geom_vline(data = tmp_plot2, aes(xintercept = cut), color = 'black', linetype = 'dashed') +
+  # geom_errorbar(aes(ymin = M-S, ymax=M+S)) +
+  facet_grid(marker~time.point, scales = 'free') + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+
+```
+
+
+
+
+
+
+
+```{r Drugresponse plots for BT360, fig.height = 5, fig.width = 12}
+
+
+control <- tmp_plot %>% filter(time.point == 16, treatment == 'Control') %>% mutate(time.point='Control')
+
+tmp_plot_amg <- tmp_plot %>% filter(treatment == 'AMG232') %>% rbind(control) #%>% filter(value>0)
+tmp_plot_amg <- tmp_plot_amg %>% select(sample.id:marker,cell_cycle_phase,group) %>% spread(marker,group)
+
+
+tmp_amg <- tmp_plot_amg %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232')) %>% 
+  select(sample.id:OID, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('MDM2',MDM2,'_p53', p53,'_p21', p21  )) 
+
+
+
+table(tmp_amg$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_Bulk[c('sample.id','time.point', 'ID')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+p<- ggplot(tmp_table, aes(fill=ID, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Drug Response for BT360-AMG")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))
+  #scale_x_reverse()
+
+png(filename = file.path(wd, 'paper_figures', 'LBT005drugresponseAMG.png'), width = 10, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+tmp_table <- table(tmp_plot_amg[c('sample.id','time.point', 'cell_cycle_phase')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+cols <- c('#F03B20','#FEB24C','#FFEDA0',"#800026")
+greengray <- c("#006D2C","#A1D99B","#252525","#BDBDBD")
+
+library("colorspace")
+q4 <- sequential_hcl(4, palette = 'Heat')
+q4[4] <- 'forestgreen'
+tmp_table<- tmp_table %>% mutate(cell_cycle_phase=factor(cell_cycle_phase,levels = c('M','G2','S','G0G1')))
+p<- ggplot(tmp_table, aes(fill=cell_cycle_phase, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Cell Cycle Phase for BT360-AMG")+
+  #scale_fill_manual(values=greengray)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))+scale_fill_manual(values =  c( "G0G1" = '#BDBDBD', 'S'='#A1D99B',"G2"='#006D2C','M' = '#252525'))
+  #scale_x_reverse()
+
+
+png(filename = file.path(wd, 'paper_figures', 'LBT005cellcycleAMG.png'), width = 8, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+#################################################RT###########################################################df_data <- df_data_all %>% dplyr::filter(sample.id == 'BT360')
+
+
+tmp_plot_rt <- tmp_plot %>% filter(treatment == 'RT') %>% rbind(control) #%>% filter(value>0)
+tmp_plot_rt <- tmp_plot_rt %>% select(sample.id:marker,cell_cycle_phase,group) %>% spread(marker,group)
+
+
+
+
+tmp_rt <- tmp_plot_rt %>% 
+  dplyr::filter(treatment %in% c('Control','RT')) %>% 
+  select(sample.id:OID, p53, p21,pH2AX) #%>% 
+
+
+
+tmp_rt <- tmp_rt %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         pH2AX = plyr::mapvalues(pH2AX, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21,'_p53', p53, '_pH2AX',pH2AX)) 
+
+
+
+table(tmp_rt$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+
+tmp_table <- table(tmp_rt[c('sample.id','time.point', 'ID')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+p<- ggplot(tmp_table, aes(fill=ID, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Drug Response for LBT005-RT")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))
+  #scale_x_reverse()
+
+png(filename = file.path(wd, 'paper_figures', 'LBT005drugresponseRT.png'), width = 10, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+
+tmp_table <- table(tmp_plot_rt[c('sample.id','time.point', 'cell_cycle_phase')]) %>% as.data.frame() %>% group_by(time.point) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(time.point, Freq)
+tmp_table <- tmp_table %>% mutate(time.point=factor(time.point,levels = c('48','24','16','8','Control')))
+cols <- c('#F03B20','#FEB24C','#FFEDA0',"#800026")
+greengray <- c("#006D2C","#A1D99B","#252525","#BDBDBD")
+
+tmp_table<- tmp_table %>% mutate(cell_cycle_phase=factor(cell_cycle_phase,levels = c('M','G2','S','G0G1')))
+library("colorspace")
+q4 <- sequential_hcl(4, palette = 'Heat')
+q4[4] <- 'forestgreen'
+p<- ggplot(tmp_table, aes(fill=cell_cycle_phase, y=time.point, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Cell Cycle Phase for BT360 RT")+
+  #scale_fill_manual(values=greengray)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))+
+  facet_wrap(~sample.id, strip.position="top")+
+  theme(strip.text = element_text(size = 25))+scale_fill_manual(values = c( "G0G1" = '#BDBDBD', 'S'='#A1D99B',"G2"='#006D2C','M' = '#252525'))
+  #scale_x_reverse()
+
+
+png(filename = file.path(wd, 'paper_figures', 'LBT005cellcycle_RT.png'), width = 8, height = 6, units = 'in', res = 300)
+print(p)
+dev.off()
+```
+
+
+
+
+
+```{r,fig.width=14,fig.height=13}
+tmp_plot <- df_data %>% 
+  # dplyr::filter(time.point == 16) %>%
+  # filter(sample.id != 'LBT005') %>% 
+  filter(marker %in% c('p53', 'p21', 'MDM2', 'pH2AX', 'BAX', 'CC3', 'pATM')) %>% 
+  mutate(treatment = factor(treatment, levels = c('Control', 'AMG232', 'RT')))
+
+tmp_cutoffs <- read.csv2(file.path(wd, 'cutoffs.csv'),stringsAsFactors = FALSE)
+tmp_plot <- tmp_plot %>% left_join(tmp_cutoffs %>% rename(cut = value),by=c('marker','sample.id'))
+
+
+tmp_data <- tmp_plot %>% 
+  mutate(group = ifelse(value > cut , 1, 0))
+
+
+tmp_data <- read.csv2(file.path(wd,'DrugResponseForCelllines.csv'),stringsAsFactors = FALSE)
+
+tmp_data2 <- tmp_data %>% select(sample.id: marker,predicted.celltype,cell_cycle_phase,group) %>%  spread(marker,group)
+
+tmp_amg <- tmp_data2 %>% 
+  dplyr::filter(treatment %in% c('Control','AMG232')) %>% 
+  select(sample.id:predicted.celltype, p53, p21,MDM2) #%>% 
+
+
+tmp_amg <- tmp_amg %>%
+  mutate(p53 = plyr::mapvalues(p53, from = c(0, 1), to = c('low', 'high')),
+         p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('MDM2',MDM2,'_p53', p53,'_p21', p21  )) %>% 
+  mutate(Sample = paste(sample.id, treatment))
+
+
+
+
+
+
+
+
+#making plots for Bulk samples:
+ tmp_amg_Bulk <- tmp_amg #%>% dplyr::filter(region =='Bulk') %>% filter(predicted.celltype != 'tumor')
+ 
+ tmp_table <- tmp_amg_Bulk %>% group_by(Sample,predicted.celltype,ID) %>% mutate(N=n()) %>% group_by(Sample,predicted.celltype) %>% mutate(M=n()) %>% 
+   ungroup() %>% mutate(P=round(N/M*100),2)
+tmp_table <- table(tmp_amg_Bulk[c('Sample', 'ID', 'predicted.celltype')]) %>% as.data.frame() %>% group_by(Sample,predicted.celltype) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+#temp_table <- tmp_table %>% separate(Sample,'smaple.id', 'region', 'treatment',sep='_')
+p<- ggplot(tmp_table, aes(fill=ID, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme(legend.position = "bottom")+
+  #scale_x_reverse()+
+  facet_grid(.~predicted.celltype)
+
+
+
+png(file.path(wd, 'paper_figures', 'AMG_drugresponse_celltype_PDCL.png'), width = 16, height = 10, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+tmp_table2 <- tmp_table %>% separate(Sample, c('sample.id','treatment'),sep=' ')
+
+p<- ggplot(tmp_table2 %>% dplyr::filter(sample.id%in%c('LBT124', 'LBT062', 'BT360', 'BT112', 'LBT059'), predicted.celltype!='OPC_NPC'), aes(fill=ID, y=treatment, x=Freq)) + 
+     geom_bar(position="stack", stat="identity",width=0.5)+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme(legend.position = "bottom")+
+  #scale_x_reverse()+
+  facet_grid(sample.id~predicted.celltype)
+
+
+
+png(file.path(wd, 'paper_figures', 'AMG_drugresponse_celltype_PDCL2.png'), width = 16, height = 10, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+
+
+
+```
+```{r, plotting the differences between resposive and non-responsive smaples, fig.width=14, fig.height = 16, echo=FALSE}
+
+tmp_amg_delta <- tmp_amg %>%
+  mutate(p21 = plyr::mapvalues(p21, from = c(0, 1), to = c('low', 'high')),
+         MDM2 = plyr::mapvalues(MDM2, from = c(0, 1), to = c('low', 'high'))) %>% 
+  mutate(ID = paste0('p21', p21 ,'_MDM2',MDM2 )) %>% 
+  mutate(Sample = paste(sample.id, treatment,sep='_')) 
+
+
+tmp_amg_delta <- tmp_amg_delta %>% mutate(ID2=ifelse(ID=="p21low_MDM2low","non-responsive","responsive"))
+table(tmp_amg_delta$ID) %>% as.data.frame() %>% mutate(P = round(100*Freq/sum(Freq), 2))
+
+#tmp_table <- table(tmp_amg[c('ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+# tmp_table %>% spread(ID, Freq)
+# ggplot(tmp_table, aes(ID, Freq, fill = response)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+#making plots for Bulk samples:
+ tmp_amg_plot <- tmp_amg_delta #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_plot[c('Sample', 'ID2')]) %>% as.data.frame() %>% group_by(Sample) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors <-c("#253494","#1D91C0" ,"#7FCDBB","#EDF8B1","#FED976", "#FD8D3C", "#E31A1C" ,"#800026")
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+colors2 <- c("#253494","#800026")
+p<- ggplot(tmp_table, aes(fill=ID2, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.text = element_text(size=15))
+
+
+print(p)
+
+
+
+
+
+tmp_table2 <- tmp_table %>% separate(Sample,c('sample.id' , 'treatment'), sep='_') %>% 
+  mutate(Sample= sample.id) %>% 
+  group_by(Sample,ID2) %>% 
+  mutate(dif = ifelse(ID2 == 'responsive', max(Freq) - min(Freq), min(Freq)-max(Freq))) %>% 
+  select(-treatment,-Freq) %>% 
+  unique() %>% 
+  ungroup()
+
+
+
+tmp_table2 <- tmp_table2 %>%
+   arrange(desc(dif)) 
+col <- "#800026"
+tmp_table_new <- tmp_table2 %>% mutate(Sample = factor(Sample, levels = unique(tmp_table2$Sample)))
+p<- ggplot(tmp_table_new %>% filter(ID2=='responsive'), aes( y=Sample, x=dif,fill=col)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("Delta")+
+  scale_fill_manual(values= col)+
+  theme(axis.text = element_text(size = 20))+
+  theme(axis.title = element_text(size = 25))+
+  theme(legend.position = "none")
+
+
+png(file.path(wd, 'paper_figures', 'AMG_sensitive_sroted.png'), width = 7, height = 10, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+
+```
+```{r, computing delta within cell types in the new biopsy data, fig.width = 16, fig.height = 12 , echo=FALSE}
+
+tmp_amg_delta_celltype <- tmp_amg_delta# %>% dplyr::filter(predicted.celltype != 'tumor')
+
+
+
+ tmp_amg_plot <- tmp_amg_delta_celltype  #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_plot[c('Sample', 'predicted.celltype', 'ID2')]) %>% as.data.frame() %>% group_by(Sample,predicted.celltype) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors2 <- "#800026"
+temp_table <- tmp_table %>% separate(Sample,c('sample.id', 'treatment'),sep='_') %>% filter(treatment=='AMG232') %>% mutate(Sample=paste(sample.id,treatment),sep = '_')
+p<- ggplot(temp_table %>% filter(ID2=='responsive'), aes(fill=ID2, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity",width=0.7)+
+  ggtitle("AMG")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme(legend.position = "bottom")+
+  #scale_x_reverse()+
+  facet_grid(.~predicted.celltype)
+
+
+
+png(file.path(wd, 'paper_figures', 'AMG_sensitive_celltype.png'), width = 10, height = 8, units = 'in', res = 300)
+print(p)
+dev.off()
+
+tmp_table <- tmp_table %>% separate(Sample, c('sample.id','treatment'),sep='_')
+
+p<- ggplot(tmp_table %>% dplyr::filter(ID2=='responsive',sample.id%in%c('LBT124', 'LBT062', 'BT360', 'BT112', 'LBT059'), predicted.celltype!='OPC_NPC'), aes(fill=ID2, y=sample.id, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme(legend.position = "bottom")+
+  #scale_x_reverse()+
+  facet_grid(.~predicted.celltype)
+
+
+
+png(file.path(wd, 'paper_figures', 'AMG_sensitive_celltype_main.png'), width = 14, height = 10, units = 'in', res = 300)
+print(p)
+dev.off()
+
+```
+
+```{r,}
+
+
+ tmp_amg_plot <- tmp_amg_delta_celltype  #%>% dplyr::filter(region =='Bulk')
+
+tmp_table <- table(tmp_amg_plot[c('Sample', 'predicted.celltype', 'ID2')]) %>% as.data.frame() %>% group_by(Sample,predicted.celltype) %>% mutate(Freq = round(100*Freq/sum(Freq),2)) %>% ungroup()
+tmp_table %>% spread(Sample, Freq)
+
+
+colors2 <- c("#253494","#800026")
+#temp_table <- tmp_table %>% separate(Sample,'smaple.id', 'region', 'treatment',sep='_')
+p<- ggplot(tmp_table, aes(fill=ID2, y=Sample, x=Freq)) + 
+     geom_bar(position="stack", stat="identity")+
+  ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text = element_text(size = 10))+
+  theme(axis.title = element_text(size = 10))+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme(legend.position = "bottom")+
+  #scale_x_reverse()+
+  facet_grid(.~predicted.celltype)
+
+
+
+print(p)
+
+
+tmp_table2 <- tmp_table %>% separate(Sample,c('sample.id' , 'treatment'), sep='_') %>% 
+  mutate(Sample= sample.id ) %>% 
+  group_by(Sample,ID2, predicted.celltype) %>% 
+  mutate(dif = ifelse(ID2 == 'responsive', max(Freq) - min(Freq), min(Freq)-max(Freq))) %>% 
+  select(-treatment,-Freq) %>% 
+  unique() %>% 
+  ungroup()
+
+colors2 <- c("#800026")
+p<- ggplot(tmp_table2 %>% dplyr::filter(ID2=='responsive'), aes(fill=ID2, y=Sample, x=dif)) + 
+     geom_bar(position="stack", stat="identity",width=0.7)+
+  #ggtitle("AMG and Control")+
+  scale_fill_manual(values=colors2)+
+  theme(axis.text.y = element_text(size = 20))+
+  theme(axis.title.y = element_text(size = 20))+
+  theme(legend.text = element_text(size=20))+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme(legend.position = "bottom")+
+  #scale_x_reverse()+
+  facet_grid(.~predicted.celltype)
+
+
+
+png(file.path(wd, 'paper_figures', 'delta_celltype_main.png'), width = 14, height = 8, units = 'in', res = 300)
+print(p)
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Panel optimization
+
+Fit all panels for 1, 2, ..., n markers and build a pareto front based on performance ()
+
+```{r amg induction, eval = FALSE}
+
+tmp_amg <- tmp_data %>% 
+  filter(marker %in% c('p21', 'p53', 'MDM2', 'BAX', 'CC3')) %>% 
+  filter(treatment != 'RT')
+
+# tmp_amg <- tmp_amg %>% left_join(tmp_dictionary)
+df_panel_data_amg <- data.frame()
+df_stats_amg <- data.frame()
+
+for(i in c(1:n_distinct(tmp_amg$marker))){
+  print(i)
+  tmp_combs <- combn(unique(tmp_amg$marker), i) %>% t()
+  for(j in c(1:nrow(tmp_combs))){
+    tmp_panel <- tmp_combs[j,]
+    print(tmp_panel)
+    tmp_panel_data <- tmp_amg %>% 
+      filter(marker %in% tmp_panel) %>% 
+      group_by(sample.id, treatment, OID) %>% 
+      summarise(cell_cycle_phase = unique(cell_cycle_phase), predicted.celltype = unique(predicted.celltype), ID = paste(marker, group, sep = '_', collapse = '')) %>% 
+      ungroup() %>% 
+      group_by(sample.id, treatment, ID) %>% 
+      summarise(N = n()) %>% 
+      ungroup() %>% 
+      group_by(sample.id, treatment) %>% 
+      mutate(M = sum(N)) %>% 
+      ungroup() %>% 
+      mutate(P = 100*N/M) %>% 
+      select(-N, -M) %>% 
+      spread(treatment, P) %>% 
+      left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition, MaxInhibition) %>% filter(treatment == 'AMG232') %>% unique()) %>% 
+      mutate(D = AMG232-Control) %>% 
+      select(sample.id, ID, D, response:MaxInhibition) %>% 
+      # group_by(ID) %>% 
+      # mutate(D = scale(D)) %>% 
+      # ungroup() %>% 
+      spread(ID, D, fill = 0)
+    tmp_panel_data <- tmp_panel_data %>% group_by(sample.id) %>% sample_n(1) %>% ungroup()
+    
+    tmp_rownames <- tmp_panel_data$sample.id
+    tmp_matrix <- tmp_panel_data %>% select(-sample.id, -response, -p53.mut, -AUC, -LogIC50, -MaxInhibition, -Inhibition) %>% as.matrix()
+    rownames(tmp_matrix) <- tmp_rownames
+    
+    library(umap)
+    custom.config <- umap.defaults
+    
+    custom.config$metric <- 'cosine'
+    custom.config$n_neighbors <- 3
+    
+    tmp_umap <- umap(tmp_matrix)#, custom.config)
+    tmp_tsne <- Rtsne::Rtsne(tmp_matrix, perplexity = 4)
+    tmp_pca <- prcomp(tmp_matrix)
+    
+    library(slingshot)
+    library(destiny)
+    dm <- DiffusionMap(tmp_matrix)
+    
+    tmp_panel_data <- tmp_panel_data %>%
+      mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+      mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+      mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) %>% 
+      mutate(DC1 = dm$DC1, DC2 = dm$DC2, DC3 = dm$DC3)
+
+    cl <- tmp_panel_data$response %>% as.factor()
+    tmp_lineages <- getLineages(tmp_panel_data %>% select(DC1,DC2), cl)
+    tmp_lineages
+    
+    tmp_curves <- getCurves(tmp_lineages)
+    
+    tmp_panel_data <- tmp_panel_data %>% 
+      mutate(curve.s1 = tmp_curves@curves$curve1$s[,1], 
+             curve.s2 = tmp_curves@curves$curve1$s[,2], 
+             order = tmp_curves@curves$curve1$ord,
+             pseudotime = slingshot::slingPseudotime(tmp_curves))
+    
+    # tmp_model <- loess(tmp_panel_data$MaxInhibition~tmp_panel_data$pseudotime)
+    # plot(tmp_panel_data$pseudotime,tmp_panel_data$MaxInhibition)
+    # points(tmp_panel_data$pseudotime, predict(tmp_model), col='red', lwd=2)
+    # tmp_x <- tmp_panel_data$pseudotime[,1]
+    # tmp_y <- tmp_panel_data$MaxInhibition
+    # add_nls <- nls(tmp_y ~ a*exp(r*tmp_x), start = list(a = 0.5, r = 0.2))
+    # 
+    # plot(tmp_panel_data$pseudotime,tmp_panel_data$MaxInhibition)
+    # points(tmp_panel_data$pseudotime, predict(add_nls), col='red', lwd=2)
+
+    tmp_model_max_inhib <- lm(tmp_panel_data$MaxInhibition~tmp_panel_data$pseudotime)
+    tmp_predictions_max_inhib <- tmp_model_max_inhib %>% predict(tmp_panel_data, type = 'response')
+    
+    tmp_model_auc <- lm(tmp_panel_data$AUC~tmp_panel_data$pseudotime)
+    tmp_predictions_auc <- tmp_model_auc %>% predict(tmp_panel_data, type = 'response')
+      
+    tmp_panel_data <- tmp_panel_data %>% mutate(predicted.MaxInhibition = tmp_predictions_max_inhib, predicted.AUC = tmp_predictions_auc)
+    
+    library(caret)
+      
+    tmp_cor <- cor.test(tmp_panel_data$AUC, tmp_panel_data$pseudotime)
+    tmp_mic <- minerva::mine(tmp_panel_data$AUC, tmp_panel_data$pseudotime)$MIC
+    tmp_stats <- data.frame(panel = paste(tmp_panel, collapse = '', sep = '_'), Nmarkers = i, parameter = 'AUC', R = tmp_cor$estimate, pVal = tmp_cor$p.value, MIC = tmp_mic, RMSE = RMSE(tmp_predictions_auc, tmp_panel_data$AUC), R2 = R2(tmp_predictions_auc, tmp_panel_data$AUC))
+    df_stats_amg <- df_stats_amg %>% bind_rows(tmp_stats)
+    
+    tmp_cor <- cor.test(tmp_panel_data$MaxInhibition, tmp_panel_data$pseudotime)
+    tmp_mic <- minerva::mine(tmp_panel_data$MaxInhibition, tmp_panel_data$pseudotime)$MIC
+    tmp_stats <- data.frame(panel = paste(tmp_panel, collapse = '', sep = '_'), Nmarkers = i, parameter = 'MaxInhibition', R = tmp_cor$estimate, pVal = tmp_cor$p.value, MIC = tmp_mic, RMSE = RMSE(tmp_predictions_max_inhib, tmp_panel_data$MaxInhibition), R2 = R2(tmp_predictions_max_inhib, tmp_panel_data$MaxInhibition))
+    df_stats_amg <- df_stats_amg %>% bind_rows(tmp_stats)
+    df_panel_data_amg <- df_panel_data_amg %>% bind_rows(tmp_panel_data %>% gather(feature, value, -sample.id, -response, -p53.mut, -AUC, -predicted.AUC, -LogIC50, -MaxInhibition, -predicted.MaxInhibition, -Inhibition, -uMap1, -uMap2, -tsne1, -tsne2, -PC1, -PC2, -DC1, -DC2, -DC3, -curve.s1, -curve.s2, -order, -pseudotime) %>% mutate(panel = paste(tmp_panel, collapse = ', ')))
+  }
+}
+
+write.csv2(df_stats_amg, file.path(wd, 'Results', 'df_stats_amg.csv'), row.names = FALSE)
+write.csv2(df_panel_data_amg, file.path(wd, 'Results', 'df_panel_data_amg.csv'), row.names = FALSE)
+
+```
+
+```{r load optimization panel, fig.height = 5, fig.width = 12}
+
+df_stats_amg <- read.csv2(file.path(wd, 'Results', 'df_stats_amg.csv'), stringsAsFactors = FALSE)
+df_panel_data_amg <- read.csv2(file.path(wd, 'Results', 'df_panel_data_amg.csv'), stringsAsFactors = FALSE)
+
+a <- df_panel_data_amg %>% select(-feature, -value) %>% unique()
+ggplot(a, aes(DC1, DC2, color = response)) + geom_point() + theme_bw() + facet_wrap(~panel) + geom_smooth(data = a, aes(curve.s1, curve.s2), color = 'black') + ggrepel::geom_text_repel(aes(label = sample.id), max.overlaps = Inf)
+
+a <- a %>% group_by(panel) %>% arrange(pseudotime) %>% mutate(rank = 1:n()) %>% ungroup()
+write.csv2(a, file.path(wd, 'Results', 'df_panels_amg_sorted.csv'), row.names = FALSE)
+
+a <- read.csv2(file.path(wd, 'Results', 'df_panels_amg_sorted.csv'), stringsAsFactors = FALSE)
+
+b <- a %>% select(sample.id, panel, pseudotime) %>% spread(panel, pseudotime) %>% select(-sample.id) %>% as.matrix()
+r <- cor(b)
+col1 <- colorRampPalette(brewer.pal(9, 'BrBG'))
+corrplot::corrplot.mixed(r, upper = 'square', tl.pos = 'lt', tl.cex = 0.5, tl.col = 'black', number.cex = 0.4, order = 'hclust', mar = c(1, 1, 1, 1), upper.col = col1(100))
+
+tmp_cor <- tmp_data %>% 
+  filter(marker %in% c('p21', 'p53', 'MDM2', 'BAX', 'CC3')) %>% 
+  filter(treatment != 'RT') %>% 
+  group_by(sample.id, treatment, marker, group) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment, marker) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  filter(group == 1) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition) %>% filter(treatment == 'AMG232') %>% unique()) %>% 
+  mutate(D = AMG232-Control) %>% 
+  select(sample.id, marker, D, response:Inhibition) %>% 
+  # group_by(ID) %>% 
+  # mutate(D = scale(D)) %>% 
+  # ungroup() %>% 
+  spread(marker, D, fill = 0)
+
+tmp_matrix <- tmp_cor %>% select(BAX:p53) %>% as.matrix()
+r <- cor(tmp_matrix)
+corrplot::corrplot.mixed(r, upper = 'square', tl.pos = 'lt', tl.cex = 0.5, tl.col = 'black', number.cex = 0.4, order = 'hclust', mar = c(1, 1, 1, 1), upper.col = col1(100))
+ 
+```
+
+```{r show panel performance, fig.height = 5, fig.width = 12}
+
+##R
+tmp_plot <- df_stats_amg %>% filter(parameter == 'AUC') %>% arrange(R) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_R_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_amg %>% filter(parameter == 'MaxInhibition') %>% arrange(R) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_R_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##pVal
+tmp_plot <- df_stats_amg %>% filter(parameter == 'AUC') %>% arrange(-log10(pVal)) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_pVal_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_amg %>% filter(parameter == 'MaxInhibition') %>% arrange(-log10(pVal)) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_pVal_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##MIC
+tmp_plot <- df_stats_amg %>% filter(parameter == 'AUC') %>% arrange(-MIC) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_MIC_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_amg %>% filter(parameter == 'MaxInhibition') %>% arrange(-MIC) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_MIC_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##RMSE
+tmp_plot <- df_stats_amg %>% filter(parameter == 'AUC') %>% arrange(-RMSE) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_RMSE_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_amg %>% filter(parameter == 'MaxInhibition') %>% arrange(-RMSE) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_RMSE_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##R2
+tmp_plot <- df_stats_amg %>% filter(parameter == 'AUC') %>% arrange(-R2) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_R2_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_amg %>% filter(parameter == 'MaxInhibition') %>% arrange(R2) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'AMG_panel_performance_R2_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+DT::datatable(df_stats_amg, filter = 'top')
+
+```
+
+```{r select best panel}
+
+tmp_plot <- df_stats_amg %>% 
+  group_by(parameter, Nmarkers) %>% 
+  filter(abs(R) == max(abs(R))) %>%
+  ungroup()
+
+ggplot(tmp_plot, aes(Nmarkers, R, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+
+png(file.path(wd, '..', 'paper_figures', 'pareto_AMG_R.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(Nmarkers, R, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+dev.off()
+
+tmp_plot <- df_stats_amg %>% 
+  group_by(parameter, Nmarkers) %>% 
+  filter(pVal == min(pVal)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(Nmarkers, -log10(pVal), color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+
+png(file.path(wd, '..', 'paper_figures', 'pareto_AMG_pVal.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(Nmarkers, -log10(pVal), color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+dev.off()
+
+tmp_plot <- df_stats_amg %>% 
+  group_by(parameter, Nmarkers) %>% 
+  filter(MIC == max(MIC)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(Nmarkers, MIC, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+
+png(file.path(wd, '..', 'paper_figures', 'pareto_AMG_MIC.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(Nmarkers, MIC, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+dev.off()
+
+```
+
+```{r p21 model}
+
+tmp_plot <- df_panel_data_amg %>% filter(panel == 'p21') %>% spread(feature, value)
+
+ggplot(tmp_plot, aes(pseudotime, AUC, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21')
+ggplot(tmp_plot %>% filter(!(sample.id %in% c('LBT124', 'LBT062', 'LBT005'))), aes(pseudotime, AUC, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21')
+ggplot(tmp_plot, aes(p21_1, AUC, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(color = 'black', se = FALSE) + ggtitle('p21')
+
+ggplot(tmp_plot %>% filter(!(sample.id %in% c('LBT124', 'LBT062', 'LBT005'))), aes(p21_1, AUC, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(color = 'black', se = FALSE) + ggtitle('p21')
+
+ggplot(tmp_plot, aes(pseudotime, MaxInhibition, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21')
+ggplot(tmp_plot %>% filter(!(sample.id %in% c('LBT124', 'LBT062', 'LBT005'))), aes(pseudotime, MaxInhibition, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21')
+ggplot(tmp_plot, aes(p21_1, MaxInhibition, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(color = 'black', se = FALSE) + ggtitle('p21')
+
+ggplot(tmp_plot %>% filter(!(sample.id %in% c('LBT124', 'LBT062', 'LBT005'))), aes(p21_1, MaxInhibition, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(color = 'black', se = FALSE) + ggtitle('p21')
+
+```
+
+The flow will be: 
+First, filter based on MDM2 samples
+Second, regression based on p21 model
+
+Since p21 is only one marker we can just take the % of induced cells as predictor
+
+```{r final panel}
+
+tmp_amg <- tmp_data %>% 
+  filter(treatment != 'RT') %>%
+  filter(marker %in% c('MDM2', 'p21')) %>%
+  # mutate(group = plyr::mapvalues(group, from = c(0,1), to = c('low', 'high'))) %>% 
+  group_by(sample.id, treatment, marker, group) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment, marker) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  filter(group == 1) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition, MaxInhibition) %>% filter(treatment == 'AMG232') %>% unique()) %>% 
+  mutate(D = AMG232-Control) %>% 
+  select(sample.id, marker, D, response:MaxInhibition) %>% 
+  spread(marker, D, fill = 0) %>% 
+  group_by(sample.id) %>% 
+  sample_n(1) %>% 
+  ungroup()
+
+ggplot(tmp_amg, aes(MDM2, MaxInhibition, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_vline(xintercept = 15, linetype = 'dashed')
+
+mdm2_induced_samples <- tmp_amg %>% filter(MDM2 > 15) %>% 
+  mutate(predicted.MaxInhibition = mean(MaxInhibition))
+
+p21_model <- tmp_amg %>% filter(MDM2 <= 15)
+tmp_model <- mgcv::gam(MaxInhibition ~ s(p21, bs = 'cs'), data = p21_model, method = 'REML')
+p21_model <- p21_model %>% 
+  mutate(predicted.MaxInhibition = predict(tmp_model))
+
+ggplot(p21_model, aes(p21, predicted.MaxInhibition, color = response)) + geom_point() + theme_bw() + geom_smooth(color = 'black') + ggrepel::geom_text_repel(aes(label = sample.id), max.overlaps = Inf)
+
+tmp_amg <- mdm2_induced_samples %>% bind_rows(p21_model)
+
+ggplot(tmp_amg, aes(MaxInhibition, predicted.MaxInhibition, color = response)) + geom_point() + theme_bw() + geom_smooth(color = 'black', method = 'lm') + ggrepel::geom_text_repel(aes(label = sample.id))
+# formula = y ~ s(x, bs = "cs") with method = "REML"
+
+```
+
+Select panel of size 1 as the best performing one.
+Both BAX and p21 have a comparable predictive ability. Choose p21 since the effect size (shift in the distribution) was larger. This would make a more reliable assay. In BAX the differences are too small (yet significant).
+
+```{r details on selected panel, eval = FALSE}
+
+# tmp_dictionary <- read.csv2(file.path(wd, 'Data', 'Metatable_PDCL.csv'), stringsAsFactors = FALSE) %>% 
+#   rename(treatment = Treatment, time.point = Timepoint, label = BC.Sample, batch = Batch, p53.mut = p53, response = Response) %>% 
+#   mutate(AUC = as.numeric(AUC), LogIC50 = as.numeric(LogIC50), MaxInhibition = as.numeric(MaxInhibition), Inhibition = as.numeric(Inhibition))
+
+tmp_amg <- tmp_data %>% 
+  filter(treatment != 'RT') %>%
+  filter(marker == 'p21') %>%
+  # filter(marker %in% c('CC3', 'MDM2')) %>% 
+  mutate(group = plyr::mapvalues(group, from = c(0,1), to = c('low', 'high'))) %>% 
+  group_by(sample.id, treatment, OID) %>% 
+  summarise(cell_cycle_phase = unique(cell_cycle_phase), predicted.celltype = unique(predicted.celltype), ID = paste(marker, group, sep = '_', collapse = '')) %>% 
+  ungroup() 
+
+tmp_table <- tmp_amg %>% 
+  group_by(sample.id, treatment, ID) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition) %>% filter(treatment == 'AMG232') %>% unique()) %>% 
+  mutate(D = AMG232-Control) %>% 
+  select(sample.id, ID, D, response:Inhibition) %>% 
+  spread(ID, D, fill = 0)
+
+tmp_plot <- tmp_table %>% 
+  # mutate(sample.identifier = paste(response, sample.id)) %>% 
+  mutate(sample.identifier = sample.id) %>% 
+  # arrange(-CC3_lowMDM2_low) %>% 
+  arrange(p21_low) %>% 
+  mutate(sample.identifier = factor(sample.identifier, levels = unique(sample.identifier))) %>% 
+  gather(ID, P, p21_high:p21_low)
+
+dir.create(file.path(wd, '..', 'paper_figures'))
+
+library(RColorBrewer)
+n <- 2
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'div',]
+qual_col_pals = qual_col_pals['RdYlBu',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+# pie(rep(1,n), col=sample(col_vector, n))
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_fingerprint_best.png'), width = 5, height = 5, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(!(sample.identifier %in% c('2080', '5050', '8020'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  # scale_fill_manual(values = colors2[c(1,8)]) +
+  # scale_fill_manual(values = col_vector[c(1, 3, 5, 11)]) +
+  scale_fill_manual(values = col_vector[c(1, 11)]) +
+  xlab(NULL) + 
+  ylab(NULL) + 
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(nrow=1,byrow=TRUE))
+dev.off()
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_fingerprint_best_gradient.png'), width = 5, height = 4, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(sample.identifier %in% c('BT333', '2080', '5050', '8020', 'BT360')) %>% 
+         mutate(sample.identifier = factor(sample.identifier, levels = c('BT333', '2080', '5050', '8020', 'BT360'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  xlab(NULL) + 
+  # scale_fill_manual(values = colors2[c(1,8)]) +
+  # scale_fill_manual(values = col_vector[c(1, 3, 5, 11)]) +
+  scale_fill_manual(values = col_vector[c(1, 11)]) +
+  ylab(NULL) + 
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(nrow=1,byrow=TRUE))
+dev.off()
+
+```
+
+```{r ccph amg, eval = FALSE}
+
+tmp_table <- table((tmp_amg %>% filter(treatment == 'AMG232'))[c('cell_cycle_phase', 'ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+tmp_table %>% spread(cell_cycle_phase, Freq)
+tmp_table <- tmp_table %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1', 'S', 'G2', 'M')))
+
+library("colorspace")
+q4 <- sequential_hcl(4, palette = 'Heat')
+q4[4] <- 'forestgreen'
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_fingerprints_ccph.png'), width = 5, height = 6, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_table, aes(ID, Freq, fill = cell_cycle_phase)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  ylab('Cell Percentage (%)') + 
+  xlab(NULL) + 
+  scale_fill_manual(values = q4) +
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  guides(fill=guide_legend(nrow=1,byrow=TRUE))
+dev.off()
+
+# ggplot(tmp_table, aes(ID, Freq, fill = cell_cycle_phase)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+tmp_table <- table(tmp_amg[c('cell_cycle_phase', 'ID')]) %>% as.data.frame() %>% group_by(cell_cycle_phase) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+tmp_table <- tmp_table %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1', 'S', 'G2', 'M')))
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_fingerprints_ccph02.png'), width = 5, height = 6, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_table, aes(cell_cycle_phase, Freq, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  ylab('Cell Percentage (%)') + 
+  xlab(NULL) + 
+  theme(legend.position = 'bottom') +
+  # scale_fill_manual(values = q4) +
+  scale_fill_manual(values = col_vector[c(1, 11)]) +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  guides(fill=guide_legend(nrow=1,byrow=TRUE))
+dev.off()
+
+```
+
+```{r p53 mut ccph, eval = FALSE, fig.height = 8, fig.width = 14}
+
+tmp_amg <- tmp_amg %>% left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition) %>% filter(treatment == 'AMG232') %>% unique())
+tmp_table <- table((tmp_amg %>% filter(treatment == 'AMG232'))[c('p53.mut', 'ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+tmp_table %>% spread(p53.mut, Freq)
+ggplot(tmp_table, aes(ID, Freq, fill = p53.mut)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+tmp_table <- table((tmp_amg %>% filter(treatment == 'AMG232'))[c('cell_cycle_phase', 'response')]) %>% as.data.frame() %>% group_by(response) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+tmp_table %>% spread(response, Freq)
+ggplot(tmp_table, aes(response, Freq, fill = cell_cycle_phase)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+tmp_table <- table((tmp_amg %>% filter(treatment == 'AMG232'))[c('predicted.celltype', 'ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+tmp_table %>% spread(ID, Freq)
+ggplot(tmp_table, aes(ID, Freq, fill = predicted.celltype)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+ggplot(tmp_table, aes(ID, Freq, fill = ID)) + geom_col() + theme_bw() + xlab(NULL) + ylab(NULL) + facet_wrap(~predicted.celltype, scales = 'free_y', nrow = 2) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + theme(legend.position = 'none')
+
+```
+
+For each sample, calculate the relative proportion of cells in each fingerprint and do DR on it.
+
+```{r amg induction fps, eval = FALSE}
+
+tmp_samples <- tmp_amg %>% 
+  group_by(sample.id, treatment, ID) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition, MaxInhibition) %>% filter(treatment == 'AMG232') %>% unique()) %>% 
+  mutate(D = AMG232-Control) %>% 
+  select(sample.id, ID, D, response:MaxInhibition) %>% 
+  spread(ID, D, fill = 0) %>% 
+  unique() %>% 
+  group_by(sample.id) %>% 
+  sample_n(1) %>% 
+  ungroup() %>% 
+  filter(!(sample.id %in% c('LBT124', 'LBT062', 'LBT005')))
+
+tmp_rownames <- tmp_samples$sample.id
+tmp_matrix <- tmp_samples %>% select(-sample.id, -response, -p53.mut, -AUC, -LogIC50, -MaxInhibition, -Inhibition) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rownames
+
+library(umap)
+custom.config <- umap.defaults
+
+custom.config$metric <- 'cosine'
+custom.config$n_neighbors <- 3
+
+tmp_umap <- umap(tmp_matrix, custom.config)
+tmp_tsne <- Rtsne::Rtsne(tmp_matrix, perplexity = 4)
+tmp_pca <- prcomp(tmp_matrix)
+
+library(slingshot)
+library(destiny)
+dm <- DiffusionMap(tmp_matrix)
+
+tmp_samples <- tmp_samples %>%
+  # as.data.frame()
+  mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+  mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+  mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) %>% 
+  mutate(DC1 = dm$DC1, DC2 = dm$DC2, DC3 = dm$DC3)
+
+# library(plotly)
+# plot_ly(x=tmp_samples$DC1, y=tmp_samples$DC2, z=tmp_samples$DC3, type="scatter3d", mode="markers", color=tmp_samples$response, size = 1)
+
+cl <- tmp_samples$response %>% as.factor()
+tmp_lineages <- getLineages(tmp_samples %>% select(DC1,DC2), cl)
+tmp_lineages
+
+tmp_curves <- getCurves(tmp_lineages)
+
+tmp_samples <- tmp_samples %>% 
+  mutate(curve.s1 = tmp_curves@curves$curve1$s[,1], 
+         curve.s2 = tmp_curves@curves$curve1$s[,2], 
+         order = tmp_curves@curves$curve1$ord,
+         pseudotime = slingshot::slingPseudotime(tmp_curves)) %>% 
+  mutate(response = factor(response, levels = c('RES', 'MIXED', 'SENS')))
+
+# tmp_samples <- tmp_samples %>% filter(response != 'MIXED')
+# ggplot(tmp_samples, aes(uMap1, uMap2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_projection.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(DC1, DC2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw() + geom_path(data = tmp_samples %>% arrange(pseudotime), aes(curve.s1, curve.s2), color = 'black') + theme(legend.position = 'bottom') + scale_color_manual(values = c('firebrick', 'darkgoldenrod', 'royalblue'))
+dev.off()
+ggplot(tmp_samples, aes(DC1, DC2, color = p53.mut)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw() + geom_line(data = tmp_samples, aes(curve.s1, curve.s2), color = 'black')
+
+# tmp_mdm2 <- tmp_data %>% 
+#   filter(treatment != 'RT') %>%
+#   filter(marker == 'MDM2') %>% 
+#   mutate(group = plyr::mapvalues(group, from = c(0,1), to = c('low', 'high'))) %>% 
+#   group_by(sample.id, treatment, OID) %>% 
+#   summarise(cell_cycle_phase = unique(cell_cycle_phase), predicted.celltype = unique(predicted.celltype), ID = paste(marker, group, sep = '_', collapse = '')) %>% 
+#   ungroup() %>% 
+#   group_by(sample.id, treatment, ID) %>% 
+#   summarise(N = n()) %>% 
+#   ungroup() %>% 
+#   group_by(sample.id, treatment) %>% 
+#   mutate(M = sum(N)) %>% 
+#   ungroup() %>% 
+#   mutate(P = 100*N/M) %>% 
+#   select(-N, -M) %>% 
+#   spread(treatment, P) %>% 
+#   left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition) %>% filter(treatment == 'AMG232') %>% unique()) %>% 
+#   mutate(D = AMG232-Control) %>% 
+#   select(sample.id, ID, D, response:Inhibition) %>% 
+#   spread(ID, D, fill = 0) %>% 
+#   select(sample.id, MDM2_high) %>% 
+#   rename(MDM2_induction = MDM2_high) %>% 
+#   unique()
+# 
+# tmp_samples <- tmp_samples %>% 
+#   left_join(tmp_mdm2)
+# 
+# png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_projection_MDM2.png'), width = 4, height = 4, units = 'in', res = 300)
+# ggplot(tmp_samples, aes(DC1, DC2, color = MDM2_induction)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw() + geom_line(data = tmp_samples, aes(curve.s1, curve.s2), color = 'black') + theme(legend.position = 'bottom') + scale_color_gradient(low = 'royalblue', high = 'firebrick')
+# dev.off()
+
+library(ggpubr)
+
+# comparisons_response <- list(c("RES", "MIXED"), c('RES', 'SENS'), c("MIXED", "SENS"))
+
+library(rstatix)
+
+stat.test <- tmp_samples %>%
+  filter(response != 'MIXED') %>%
+  droplevels() %>% 
+  t_test(pseudotime ~ response) %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance() %>% 
+  filter(p.adj < 0.05) %>% 
+  mutate(ID = paste(group1, group2, sep = '_')) %>% 
+  mutate(Pmax = as.numeric(plyr::mapvalues(ID, from = unique(ID), to = c(1.1)*max(tmp_samples$pseudotime))))
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_model.png'), width = 4, height = 4, units = 'in', res = 300)
+ggboxplot(tmp_samples, x = "response", y = "pseudotime", fill = "response") + #, palette = "jco", # ylim = c(0, 40)
+  theme_bw() + 
+  geom_jitter(alpha = 0.2) +
+  # scale_fill_manual(values = c('firebrick', 'royalblue')) +
+  scale_fill_manual(values = c('firebrick', 'darkgoldenrod', 'royalblue')) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Pseudotime') +
+  # facet_wrap(~predicted.celltype, ncol = 6) + 
+  stat_pvalue_manual(data.frame(stat.test), label = 'p.adj.signif', y.position = 'Pmax')
+dev.off()
+
+tmp_samples <- tmp_samples %>% mutate(rank = rank(pseudotime))
+
+ggplot(tmp_samples, aes(rank, pseudotime, fill = p53.mut)) + geom_col() + theme_bw()
+
+ggplot(tmp_samples, aes(p53.mut, pseudotime, fill = p53.mut)) + geom_boxplot() + theme_bw() + geom_jitter(alpha = 0.1) 
+ggplot(tmp_samples, aes(pseudotime, AUC)) + theme_bw() + geom_point(aes(color = p53.mut)) + geom_smooth()
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_AUC.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(pseudotime, AUC)) + theme_bw() + geom_point(aes(color = p53.mut)) + scale_color_manual(values = c('firebrick', 'royalblue')) + geom_smooth(method = 'lm') + theme(legend.position = 'bottom')
+dev.off()
+
+tmp_model_auc <- smooth.spline(tmp_samples$pseudotime ~ tmp_samples$AUC, spar = 0.95)
+summary(tmp_model_auc)
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_logIC50.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(pseudotime, LogIC50)) + theme_bw() + geom_point(aes(color = p53.mut)) + geom_smooth(method = 'lm') + theme(legend.position = 'bottom') + scale_color_manual(values = c('firebrick', 'royalblue'))
+dev.off()
+
+tmp_model_ic50 <- lm(tmp_samples$LogIC50 ~ tmp_samples$pseudotime)
+summary(tmp_model_ic50)
+
+png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_maxInhib.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(pseudotime, MaxInhibition)) + theme_bw() + geom_point(aes(color = p53.mut)) + geom_smooth(method = 'lm') + theme(legend.position = 'bottom') + scale_color_manual(values = c('firebrick', 'royalblue'))
+dev.off()
+
+tmp_model_maxInhib <- smooth.spline(tmp_samples$pseudotime, tmp_samples$MaxInhibition, spar = 0.75)
+# summary(tmp_model_maxInhib)
+
+# plot(tmp_samples$pseudotime, tmp_samples$MaxInhibition)
+# lines(tmp_model_maxInhib, col = "blue")
+ggplot(tmp_samples, aes(pseudotime, Inhibition)) + theme_bw() + geom_point(aes(color = p53.mut)) + geom_smooth()
+# ggplot(tmp_samples, aes(tsne1, tsne2, color = p53.mut)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+# ggplot(tmp_samples, aes(PC1, PC2, color = p53.mut)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+
+write.csv2(tmp_samples, file.path(wd, 'Results', 'tmp_samples_amg.csv'), row.names = FALSE)
+
+```
+
+Project biopsies
+
+```{r project biopsies amg}
+
+tmp_biopsy_labels <- read.csv2(file.path(wd, 'Data', 'Metatable_Biopsies_forPouya_011021.csv'), stringsAsFactors = FALSE)
+
+library(cutpointr)
+
+# tmp_biopsies1 <- read.csv2(file.path(wd, '..', 'DrugResponse forTumoral cells Biobsies.csv'), stringsAsFactors = FALSE)
+# tmp_biopsies2 <- read.csv2(file.path(wd, '..', 'DrugResponse for tumoral cells of the OLD biopsies.csv'), stringsAsFactors = FALSE)
+# 
+# tmp_biopsies <- tmp_biopsies1 %>% bind_rows(tmp_biopsies2)
+
+tmp_biopsies <- read.csv2(file.path(wd, 'Data', 'DrugResponseCorrected1310.csv'), stringsAsFactors = FALSE)
+
+tmp_samples_biopsy <- tmp_biopsies %>% 
+  filter(treatment != 'RT') %>% 
+  # gather(marker, group, BAX:pH2AX) %>% 
+  # filter(marker %in% c('CC3', 'MDM2')) %>% 
+  filter(marker %in% c('MDM2', 'p21')) %>% 
+  mutate(sample.id = paste(sample.id, region, sep = '_')) %>% 
+  group_by(sample.id, treatment, marker, group) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment, marker) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  filter(group == 1) %>% 
+  spread(treatment, P) %>% 
+  mutate(D = AMG232-Control) %>% 
+  filter(!is.na(D)) %>% 
+  select(sample.id, marker, D) %>% 
+  spread(marker, D, fill = 0) %>% 
+  unique() %>% 
+  group_by(sample.id) %>% 
+  sample_n(1) %>% 
+  ungroup()
+
+tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+  mutate(p21 = ifelse(sample.id %in% c('LBT140_Bulk', 'LBT140_Inv'), -p21, p21)) %>% 
+  mutate(MDM2 = ifelse(sample.id %in% c('LBT140_Bulk', 'LBT140_Inv'), -MDM2, MDM2)) %>% 
+  mutate(predicted.MaxInhibition = predict(tmp_model, newdata = tmp_samples_biopsy)) %>% 
+  mutate(predicted.MaxInhibition = ifelse(MDM2 > 15, mean(mdm2_induced_samples$MaxInhibition), predicted.MaxInhibition))
+
+tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+  left_join(tmp_biopsy_labels %>% mutate(sample.id = paste(Sample_ID, Region, sep = '_')) %>% filter(Treatment == 'AMG232') %>% select(sample.id, sample_type:Diagnosis, SOX2_classifier, TP53, X) %>% unique())
+  
+ggplot(tmp_samples_biopsy, aes(p21, predicted.MaxInhibition, color = TP53)) + geom_point() + theme_bw() + geom_smooth(color = 'black') + ggrepel::geom_text_repel(aes(label = sample.id), max.overlaps = Inf)
+
+# tmp_rownames <- tmp_samples_biopsy$sample.id
+# tmp_matrix <- tmp_samples_biopsy %>% select(-sample.id) %>% as.matrix()
+# rownames(tmp_matrix) <- tmp_rownames
+# 
+# tmp_dm <- dm_predict(dm, tmp_matrix)
+# tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+#   mutate(DC1 = tmp_dm[,'DC1'], DC2 = tmp_dm[,'DC2'], DC3 = tmp_dm[,'DC3'])
+# 
+# tmp_curve_biopsy <- predict(tmp_curves, tmp_samples_biopsy %>% select(DC1, DC2))
+# 
+# tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+#   mutate(curve.s1 = tmp_curve_biopsy@curves$curve1$s[,1], 
+#          curve.s2 = tmp_curve_biopsy@curves$curve1$s[,2], 
+#          order = tmp_curve_biopsy@curves$curve1$ord,
+#          pseudotime = slingshot::slingPseudotime(tmp_curve_biopsy))
+# 
+# p1 <- ggplot(tmp_samples, aes(curve.s1, curve.s2, color = pseudotime)) + geom_point()
+# p2 <- ggplot(tmp_samples_biopsy, aes(curve.s1, curve.s2, color = pseudotime)) + geom_point()
+# library(patchwork)
+# p1+p2
+# 
+# tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+#   mutate(AUC = predict(tmp_model_auc, tmp_samples_biopsy$pseudotime)$y,
+#          MaxInhibition = predict(tmp_model_maxInhib, tmp_samples_biopsy$pseudotime)$y)
+# 
+# cp_1 <- cutpointr(tmp_samples %>% filter(response != 'RES'), pseudotime, response, 
+#                 method = maximize_metric, metric = sum_sens_spec)
+# 
+# cp_2 <- cutpointr(tmp_samples %>% filter(response != 'SENS'), pseudotime, response, 
+#                 method = maximize_metric, metric = sum_sens_spec)
+# 
+# tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+#   mutate(response.predicted = ifelse(pseudotime > cp_1$optimal_cutpoint, 'SENS', 
+#                                      ifelse(pseudotime > cp_2$optimal_cutpoint, 'MIXED', 'RES')))
+# 
+# tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+#   left_join(tmp_biopsy_labels %>% mutate(sample.id = paste(Sample_ID, Region, sep = '_')) %>% dplyr::select(sample.id, TP53) %>% unique())
+# 
+# table(tmp_samples_biopsy[c('response.predicted', 'TP53')])
+# 
+# tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+#   mutate(response.predicted = factor(response.predicted, levels = c('RES', 'MIXED', 'SENS')))
+# 
+# # install.packages("scales")                              # Install scales R package
+# # library("scales") 
+# # library(scales)
+# # hex_codes1 <- hue_pal()(3)   
+# 
+# # ggplot(tmp_samples, aes(uMap1, uMap2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+# png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_projection_biopsies.png'), width = 8, height = 6, units = 'in', res = 300)
+# ggplot(tmp_samples_biopsy, aes(DC1, DC2, color = response.predicted)) + geom_point() + ggrepel::geom_label_repel(aes(label = sample.id), max.overlaps = Inf) + theme_bw() + geom_line(data = tmp_samples_biopsy, aes(curve.s1, curve.s2), color = 'black') + theme(legend.position = 'bottom') + scale_color_manual(values = c('firebrick', 'darkgoldenrod', 'royalblue'))
+# dev.off()
+# 
+# png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_projection_biopsies_real_labels.png'), width = 8, height = 6, units = 'in', res = 300)
+# ggplot(tmp_samples_biopsy, aes(DC1, DC2, color = TP53)) + geom_point() + ggrepel::geom_label_repel(aes(label = sample.id), max.overlaps = Inf) + theme_bw() + geom_line(data = tmp_samples_biopsy, aes(curve.s1, curve.s2), color = 'black') + theme(legend.position = 'bottom') + scale_color_manual(values = c('firebrick', 'darkgoldenrod', 'royalblue'))
+# dev.off()
+# 
+# DT::datatable(tmp_samples_biopsy, filter = 'top')
+# 
+# tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+#   arrange(MaxInhibition) %>% 
+#   mutate(sample.id = factor(sample.id, levels = sample.id))
+# 
+# png(filename = file.path(wd, '..', 'paper_figures', 'AMG_pseudotime_projection_biopsies_maxInhib.png'), width = 5, height = 3, units = 'in', res = 300)
+# ggplot(tmp_samples_biopsy, aes(sample.id, MaxInhibition, fill = response.predicted)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + theme(legend.position = 'bottom') + scale_fill_manual(values = c('firebrick', 'darkgoldenrod', 'royalblue'))
+# dev.off()
+# 
+# ggplot(tmp_samples_biopsy, aes(sample.id, MaxInhibition, fill = TP53)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + theme(legend.position = 'bottom') + scale_fill_manual(values = c('firebrick', 'darkgoldenrod', 'royalblue'))
+# 
+# write.csv2(tmp_samples_biopsy, file.path(wd, 'Results', 'tmp_samples_biopsy_amg.csv'), row.names = FALSE)
+
+```
+
+## RT
+
+### Panel based on biology
+
+pH2AX, p21, p53
+
+```{r biology panel rt}
+
+tmp_dictionary <- read.csv2(file.path(wd, 'Data', 'Metatable_PDCL.csv'), stringsAsFactors = FALSE, sep = '\t', dec = '.') %>% 
+  rename(treatment = Treatment, time.point = Timepoint, label = BC.Sample, batch = Batch, p53.mut = p53, response = Response) %>% 
+  mutate(AUC = as.numeric(AUC), LogIC50 = as.numeric(LogIC50), MaxInhibition = as.numeric(MaxInhibition), Inhibition = as.numeric(Inhibition))
+tmp_max_inhib <- read.csv2(file.path(wd, 'Data', 'inhibition_At_25.csv'), stringsAsFactors = FALSE, dec = '.') %>% 
+  mutate(treatment = 'RT') %>% 
+  mutate(sample.id = gsub(' ', '', sample.id))
+
+tmp_dictionary <- tmp_dictionary %>% 
+  select(-MaxInhibition) %>% 
+  left_join(tmp_max_inhib)
+
+tmp_rt <- tmp_data %>% 
+  filter(treatment != 'AMG232') %>%
+  filter(marker %in% c('pH2AX', 'p21', 'p53')) %>% 
+  mutate(group = plyr::mapvalues(group, from = c(0,1), to = c('low', 'high'))) %>% 
+  group_by(sample.id, treatment, OID) %>% 
+  summarise(cell_cycle_phase = unique(cell_cycle_phase), predicted.celltype = unique(predicted.celltype), ID = paste(marker, group, sep = '_', collapse = '_')) %>% 
+  ungroup() 
+
+tmp_table <- tmp_rt %>% 
+  group_by(sample.id, treatment, ID) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition) %>% filter(treatment == 'RT') %>% unique()) %>% 
+  # mutate(D = RT-Control) %>% 
+  mutate(D = RT) %>% 
+  select(sample.id, ID, D, response:Inhibition) %>% 
+  spread(ID, D, fill = 0) %>% 
+  select(-p53.mut) %>% 
+  unique()
+
+tmp_plot <- tmp_table %>% 
+  # mutate(sample.identifier = paste(response, sample.id)) %>%
+  mutate(sample.identifier = sample.id) %>% 
+  arrange(-p21_low_p53_low_pH2AX_low) %>% 
+  mutate(sample.identifier = factor(sample.identifier, levels = unique(sample.identifier))) %>% 
+  gather(ID, P, p21_high_p53_high_pH2AX_high:p21_low_p53_low_pH2AX_low) %>% 
+  unique() %>% 
+  group_by(sample.identifier, ID) %>% 
+  summarise(P = mean(P)) %>% 
+  ungroup()
+
+colors2 <- c("#800026","#E31A1C", "#FD8D3C","#FED976","#EDF8B1", "#7FCDBB", "#1D91C0" ,"#253494")
+
+dir.create(file.path(wd, '..', 'paper_figures'))
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_fingerprint_biology.png'), width = 5, height = 5, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(!(sample.identifier %in% c('2080', '5050', '8020'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  xlab(NULL) + 
+  ylab(NULL) + 
+  scale_fill_manual(values=colors2) +
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(nrow=4,byrow=TRUE))
+dev.off()
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_fingerprint_biology_gradient.png'), width = 5, height = 4, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(sample.identifier %in% c('BT333', '2080', '5050', '8020', 'BT360')) %>% 
+         mutate(sample.identifier = factor(sample.identifier, levels = c('BT333', '2080', '5050', '8020', 'BT360'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  xlab(NULL) + 
+  ylab(NULL) + 
+  scale_fill_manual(values=colors2) +
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(nrow=4,byrow=TRUE))
+dev.off()
+
+```
+
+### Panel optimization
+
+Fit all panels for 1, 2, ..., n markers and build a pareto front based on performance ()
+
+```{r rt induction, eval = FALSE}
+
+tmp_rt <- tmp_data %>% 
+  filter(marker %in% c('p21', 'p53', 'MDM2', 'BAX', 'CC3', 'pATM', 'pH2AX')) %>% 
+  filter(treatment != 'AMG232')
+
+tmp_dictionary <- read.csv2(file.path(wd, 'Data', 'Metatable_PDCL.csv'), stringsAsFactors = FALSE, sep = '\t', dec = '.') %>% 
+  rename(treatment = Treatment, time.point = Timepoint, label = BC.Sample, batch = Batch, p53.mut = p53, response = Response) %>% 
+  mutate(AUC = as.numeric(AUC), LogIC50 = as.numeric(LogIC50), MaxInhibition = as.numeric(MaxInhibition), Inhibition = as.numeric(Inhibition)) %>% 
+  filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition, MaxInhibition) %>% filter(treatment == 'RT') %>% unique()
+
+# tmp_rt <- tmp_rt %>% left_join(tmp_dictionary)
+df_panel_data_rt <- data.frame()
+df_stats_rt <- data.frame()
+
+for(i in c(1:n_distinct(tmp_rt$marker))){
+  print(i)
+  tmp_combs <- combn(unique(tmp_rt$marker), i) %>% t()
+  for(j in c(1:nrow(tmp_combs))){
+    tmp_panel <- tmp_combs[j,]
+    print(tmp_panel)
+    tmp_panel_data <- tmp_rt %>% 
+      filter(marker %in% tmp_panel) %>% 
+      group_by(sample.id, treatment, OID) %>% 
+      summarise(cell_cycle_phase = unique(cell_cycle_phase), predicted.celltype = unique(predicted.celltype), ID = paste(marker, group, sep = '_', collapse = '')) %>% 
+      ungroup() %>% 
+      group_by(sample.id, treatment, ID) %>% 
+      summarise(N = n()) %>% 
+      ungroup() %>% 
+      group_by(sample.id, treatment) %>% 
+      mutate(M = sum(N)) %>% 
+      ungroup() %>% 
+      mutate(P = 100*N/M) %>% 
+      select(-N, -M) %>% 
+      spread(treatment, P) %>% 
+      # left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition, MaxInhibition) %>% filter(treatment == 'RT') %>% unique()) %>% 
+      left_join(tmp_dictionary) %>% 
+      mutate(D = RT-Control) %>% 
+      select(sample.id, ID, D, response:MaxInhibition) %>% 
+      # group_by(ID) %>% 
+      # mutate(D = scale(D)) %>% 
+      # ungroup() %>% 
+      spread(ID, D, fill = 0)
+    tmp_panel_data <- tmp_panel_data %>% group_by(sample.id) %>% sample_n(1) %>% ungroup()
+    
+    tmp_rownames <- tmp_panel_data$sample.id
+    tmp_matrix <- tmp_panel_data %>% select(-sample.id, -response, -p53.mut, -AUC, -LogIC50, -MaxInhibition) %>% as.matrix()
+    rownames(tmp_matrix) <- tmp_rownames
+    
+    library(umap)
+    custom.config <- umap.defaults
+    
+    custom.config$metric <- 'cosine'
+    custom.config$n_neighbors <- 3
+    
+    tmp_umap <- umap(tmp_matrix)#, custom.config)
+    tmp_tsne <- Rtsne::Rtsne(tmp_matrix, perplexity = 4)
+    tmp_pca <- prcomp(tmp_matrix)
+    
+    library(slingshot)
+    library(destiny)
+    dm <- DiffusionMap(tmp_matrix)
+    
+    tmp_panel_data <- tmp_panel_data %>%
+      mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+      mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+      mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) %>% 
+      mutate(DC1 = dm$DC1, DC2 = dm$DC2, DC3 = dm$DC3)
+
+    cl <- tmp_panel_data$response %>% as.factor()
+    tmp_lineages <- getLineages(tmp_panel_data %>% select(DC1,DC2), cl)
+    tmp_lineages
+    
+    tmp_curves <- getCurves(tmp_lineages)
+    
+    tmp_panel_data <- tmp_panel_data %>% 
+      mutate(curve.s1 = tmp_curves@curves$curve1$s[,1], 
+             curve.s2 = tmp_curves@curves$curve1$s[,2], 
+             order = tmp_curves@curves$curve1$ord,
+             pseudotime = slingshot::slingPseudotime(tmp_curves))
+    
+    # tmp_model <- loess(tmp_panel_data$MaxInhibition~tmp_panel_data$pseudotime)
+    # plot(tmp_panel_data$pseudotime,tmp_panel_data$MaxInhibition)
+    # points(tmp_panel_data$pseudotime, predict(tmp_model), col='red', lwd=2)
+    # tmp_x <- tmp_panel_data$pseudotime[,1]
+    # tmp_y <- tmp_panel_data$MaxInhibition
+    # add_nls <- nls(tmp_y ~ a*exp(r*tmp_x), start = list(a = 0.5, r = 0.2))
+    # 
+    # plot(tmp_panel_data$pseudotime,tmp_panel_data$MaxInhibition)
+    # points(tmp_panel_data$pseudotime, predict(add_nls), col='red', lwd=2)
+
+    tmp_model_max_inhib <- lm(tmp_panel_data$MaxInhibition~tmp_panel_data$pseudotime)
+    tmp_predictions_max_inhib <- tmp_model_max_inhib %>% predict(tmp_panel_data, type = 'response')
+    
+    tmp_model_auc <- lm(tmp_panel_data$AUC~tmp_panel_data$pseudotime)
+    tmp_predictions_auc <- tmp_model_auc %>% predict(tmp_panel_data, type = 'response')
+      
+    tmp_panel_data <- tmp_panel_data %>% mutate(predicted.MaxInhibition = tmp_predictions_max_inhib, predicted.AUC = tmp_predictions_auc)
+    
+    library(caret)
+      
+    tmp_cor <- cor.test(tmp_panel_data$AUC, tmp_panel_data$pseudotime)
+    tmp_mic <- minerva::mine(tmp_panel_data$AUC, tmp_panel_data$pseudotime)$MIC
+    tmp_stats <- data.frame(panel = paste(tmp_panel, collapse = '', sep = '_'), Nmarkers = i, parameter = 'AUC', R = tmp_cor$estimate, pVal = tmp_cor$p.value, MIC = tmp_mic, RMSE = RMSE(tmp_predictions_auc, tmp_panel_data$AUC), R2 = R2(tmp_predictions_auc, tmp_panel_data$AUC))
+    df_stats_rt <- df_stats_rt %>% bind_rows(tmp_stats)
+    
+    tmp_cor <- cor.test(tmp_panel_data$MaxInhibition, tmp_panel_data$pseudotime)
+    tmp_mic <- minerva::mine(tmp_panel_data$MaxInhibition, tmp_panel_data$pseudotime)$MIC
+    tmp_stats <- data.frame(panel = paste(tmp_panel, collapse = '', sep = '_'), Nmarkers = i, parameter = 'MaxInhibition', R = tmp_cor$estimate, pVal = tmp_cor$p.value, MIC = tmp_mic, RMSE = RMSE(tmp_predictions_max_inhib, tmp_panel_data$MaxInhibition), R2 = R2(tmp_predictions_max_inhib, tmp_panel_data$MaxInhibition))
+    df_stats_rt <- df_stats_rt %>% bind_rows(tmp_stats)
+    df_panel_data_rt <- df_panel_data_rt %>% bind_rows(tmp_panel_data %>% gather(feature, value, -sample.id, -response, -p53.mut, -AUC, -predicted.AUC, -LogIC50, -MaxInhibition, -predicted.MaxInhibition, -uMap1, -uMap2, -tsne1, -tsne2, -PC1, -PC2, -DC1, -DC2, -DC3, -curve.s1, -curve.s2, -order, -pseudotime) %>% mutate(panel = paste(tmp_panel, collapse = ', ')))
+  }
+}
+
+write.csv2(df_stats_rt, file.path(wd, 'Results', 'df_stats_rt.csv'), row.names = FALSE)
+write.csv2(df_panel_data_rt, file.path(wd, 'Results', 'df_panel_data_rt.csv'), row.names = FALSE)
+
+```
+
+```{r show panel performance rt, fig.height = 5, fig.width = 18}
+
+tmp_dictionary <- read.csv2(file.path(wd, 'Data', 'Metatable_PDCL.csv'), stringsAsFactors = FALSE, sep = '\t', dec = '.') %>% 
+  rename(treatment = Treatment, time.point = Timepoint, label = BC.Sample, batch = Batch, p53.mut = p53, response = Response) %>% 
+  mutate(AUC = as.numeric(AUC), LogIC50 = as.numeric(LogIC50), MaxInhibition = as.numeric(MaxInhibition), Inhibition = as.numeric(Inhibition)) %>% 
+  filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition, MaxInhibition) %>% filter(treatment == 'RT') %>% unique()
+
+df_stats_rt <- read.csv2(file.path(wd, 'Results', 'df_stats_rt.csv'), stringsAsFactors = FALSE)
+df_panel_data_rt <- read.csv2(file.path(wd, 'Results', 'df_panel_data_rt.csv'), stringsAsFactors = FALSE)
+
+##R
+tmp_plot <- df_stats_rt %>% filter(parameter == 'AUC') %>% arrange(R) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_R_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_rt %>% filter(parameter == 'MaxInhibition') %>% arrange(R) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_R_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##pVal
+tmp_plot <- df_stats_rt %>% filter(parameter == 'AUC') %>% arrange(-log10(pVal)) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_pVal_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_rt %>% filter(parameter == 'MaxInhibition') %>% arrange(-log10(pVal)) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_pVal_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, -log10(pVal))) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##MIC
+tmp_plot <- df_stats_rt %>% filter(parameter == 'AUC') %>% arrange(-MIC) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_MIC_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_rt %>% filter(parameter == 'MaxInhibition') %>% arrange(-MIC) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_MIC_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, MIC)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##RMSE
+tmp_plot <- df_stats_rt %>% filter(parameter == 'AUC') %>% arrange(-RMSE) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_RMSE_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_rt %>% filter(parameter == 'MaxInhibition') %>% arrange(-RMSE) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_RMSE_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, RMSE)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+##R2
+tmp_plot <- df_stats_rt %>% filter(parameter == 'AUC') %>% arrange(-R2) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_R2_AUC.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+tmp_plot <- df_stats_rt %>% filter(parameter == 'MaxInhibition') %>% arrange(R2) %>% mutate(panel = factor(panel, levels = unique(panel)))
+
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+
+png(file.path(wd, '..', 'paper_figures', 'RT_panel_performance_R2_MaxInhibition.png'), width = 7, height = 3, units = 'in', res = 300)
+ggplot(tmp_plot, aes(panel, R2)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + facet_wrap(~parameter, ncol = 1) + xlab(NULL)
+dev.off()
+
+DT::datatable(df_stats_rt, filter = 'top')
+
+```
+
+```{r select best panel rt}
+
+tmp_plot <- df_stats_rt %>% 
+  group_by(parameter, Nmarkers) %>% 
+  filter(abs(R) == max(abs(R))) %>%
+  ungroup()
+
+ggplot(tmp_plot, aes(Nmarkers, R, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+
+png(file.path(wd, '..', 'paper_figures', 'pareto_RT_R.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(Nmarkers, R, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+dev.off()
+
+tmp_plot <- df_stats_rt %>% 
+  group_by(parameter, Nmarkers) %>% 
+  filter(pVal == min(pVal)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(Nmarkers, -log10(pVal), color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+
+png(file.path(wd, '..', 'paper_figures', 'pareto_RT_pVal.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(Nmarkers, -log10(pVal), color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+dev.off()
+
+tmp_plot <- df_stats_rt %>% 
+  group_by(parameter, Nmarkers) %>% 
+  filter(MIC == max(MIC)) %>% 
+  ungroup()
+
+ggplot(tmp_plot, aes(Nmarkers, MIC, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+
+png(file.path(wd, '..', 'paper_figures', 'pareto_RT_MIC.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot, aes(Nmarkers, MIC, color = parameter)) + geom_point() + theme_bw() + geom_line() + ggrepel::geom_label_repel(aes(label = panel)) + theme(legend.position = "bottom")
+dev.off()
+
+```
+
+```{r p21 cc3 model rt}
+
+tmp_plot <- df_panel_data_rt %>% filter(panel == 'p21, pATM, pH2AX') %>% spread(feature, value)
+
+ggplot(tmp_plot, aes(pseudotime, AUC, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21, pATM, pH2AX')
+ggplot(tmp_plot, aes(AUC, predicted.AUC, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21, pATM, pH2AX')
+
+ggplot(tmp_plot, aes(pseudotime, MaxInhibition, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21, pATM, pH2AX')
+ggplot(tmp_plot, aes(MaxInhibition, predicted.MaxInhibition, color = response)) + geom_point() + theme_bw() + ggrepel::geom_text_repel(aes(label = sample.id)) + geom_smooth(method = 'lm', color = 'black') + ggtitle('p21, pATM, pH2AX')
+
+```
+
+```{r details on selected panel rt}
+
+tmp_rt <- tmp_data %>% 
+  filter(treatment != 'AMG232') %>%
+  filter(marker %in% c('p21', 'pATM', 'pH2AX')) %>% 
+  mutate(group = plyr::mapvalues(group, from = c(0,1), to = c('low', 'high'))) %>% 
+  group_by(sample.id, treatment, OID) %>% 
+  summarise(cell_cycle_phase = unique(cell_cycle_phase), predicted.celltype = unique(predicted.celltype), ID = paste(marker, group, sep = '_', collapse = '_')) %>% 
+  ungroup() 
+
+tmp_table <- tmp_rt %>% 
+  group_by(sample.id, treatment, ID) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary) %>% 
+  mutate(D = RT-Control) %>% 
+  select(sample.id, ID, D, response:Inhibition) %>% 
+  spread(ID, D, fill = 0)
+
+tmp_plot <- tmp_table %>% 
+  # mutate(sample.identifier = paste(response, sample.id)) %>% 
+  mutate(sample.identifier = sample.id) %>% 
+  arrange(-p21_low_pATM_low_pH2AX_low) %>% 
+  mutate(sample.identifier = factor(sample.identifier, levels = unique(sample.identifier))) %>% 
+  gather(ID, P, p21_high_pATM_high_pH2AX_high:p21_low_pATM_low_pH2AX_low)
+
+library(RColorBrewer)
+n <- 2
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'div',]
+qual_col_pals = qual_col_pals['RdYlBu',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+
+dir.create(file.path(wd, '..', 'paper_figures'))
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_fingerprint_best.png'), width = 5, height = 5, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(!(sample.identifier %in% c('2080', '5050', '8020'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  xlab(NULL) + 
+  scale_fill_manual(values = col_vector[c(1,2,3,4,5,6,7,11)]) +
+  ylab(NULL) + 
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(ncol=2,byrow=TRUE))
+dev.off()
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_fingerprint_best_gradient.png'), width = 5, height = 4, units = 'in', res = 300)
+ggplot(tmp_plot %>% filter(sample.identifier %in% c('BT333', '2080', '5050', '8020', 'BT360')) %>% 
+         mutate(sample.identifier = factor(sample.identifier, levels = c('BT333', '2080', '5050', '8020', 'BT360'))), aes(sample.identifier, P, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  xlab(NULL) + 
+  ylab(NULL) + 
+  scale_fill_manual(values = col_vector[c(1,2,3,4,5,6,7,11)]) +
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  theme(legend.title = element_blank()) +
+  guides(fill=guide_legend(ncol=2,byrow=TRUE))
+dev.off()
+
+```
+
+```{r ccph rt}
+
+tmp_table <- table((tmp_rt %>% filter(treatment == 'RT'))[c('cell_cycle_phase', 'ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+tmp_table %>% spread(cell_cycle_phase, Freq)
+tmp_table <- tmp_table %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1', 'S', 'G2', 'M')))
+
+library("colorspace")
+q4 <- sequential_hcl(8, palette = 'Heat')
+q4[4] <- 'forestgreen'
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_fingerprints_ccph.png'), width = 5, height = 6, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_table, aes(ID, Freq, fill = cell_cycle_phase)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  ylab('Cell Percentage (%)') + 
+  xlab(NULL) + 
+  theme(legend.position = 'bottom') +
+  scale_fill_manual(values = q4) +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  guides(fill=guide_legend(nrow=1,byrow=TRUE))
+dev.off()
+
+tmp_table <- table((tmp_rt %>% filter(treatment == 'RT'))[c('cell_cycle_phase', 'ID', 'sample.id')]) %>% as.data.frame() %>% group_by(sample.id, ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+tmp_table %>% spread(cell_cycle_phase, Freq)
+tmp_table <- tmp_table %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1', 'S', 'G2', 'M')))
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_fingerprints_ccph_samples.png'), width = 12, height = 4, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_table %>% filter(!(sample.id %in% c('2080', '5050', '8020'))), aes(ID, Freq, fill = cell_cycle_phase)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  ylab('Cell Percentage (%)') + 
+  xlab(NULL) + 
+  facet_wrap(~sample.id, nrow = 2) +
+  scale_fill_manual(values = q4) +
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  guides(fill=guide_legend(nrow=1,byrow=TRUE))
+dev.off()
+
+# ggplot(tmp_table, aes(ID, Freq, fill = cell_cycle_phase)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+tmp_table <- table(tmp_rt[c('cell_cycle_phase', 'ID')]) %>% as.data.frame() %>% group_by(cell_cycle_phase) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+tmp_table <- tmp_table %>% mutate(cell_cycle_phase = factor(cell_cycle_phase, levels = c('G0G1', 'S', 'G2', 'M')))
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_fingerprints_ccph02.png'), width = 5, height = 6, units = 'in', res = 300)
+# png(filename = file.path('~/Desktop/AMG_fingerprints.png'), width = 5, height = 6, units = 'in', res = 300)
+ggplot(tmp_table, aes(cell_cycle_phase, Freq, fill = ID)) +
+  geom_col() + 
+  theme_bw() + 
+  coord_flip() + 
+  scale_fill_manual(values = q4) +
+  ylab('Cell Percentage (%)') + 
+  xlab(NULL) + 
+  theme(legend.position = 'bottom') +
+  # theme(legend.box="vertical", legend.margin=margin(c(1,1,1,1)))
+  theme(legend.direction = "horizontal") +
+  guides(fill=guide_legend(ncol=2,byrow=TRUE))
+dev.off()
+
+```
+
+```{r ccph rt 02, eval = FALSE}
+
+tmp_rt <- tmp_rt %>% filter(treatment == 'RT') %>% left_join(tmp_dictionary %>% filter(time.point == 16) %>% select(sample.id, treatment, response:Inhibition) %>% filter(treatment == 'RT') %>% unique())
+tmp_rt <- tmp_rt %>% mutate(tmp_id = paste(response, sample.id))
+
+tmp_table <- table(tmp_rt[c('cell_cycle_phase', 'tmp_id', 'ID')]) %>% as.data.frame() %>% group_by(tmp_id, ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() %>% 
+  filter(!(tmp_id %in% c('RES 2080', 'MIXED 5050', 'SENS 8020')))
+
+png(file.path(wd, '..', 'paper_figures', 'p21_cell_cycle.png'), width = 12, height = 4, units = 'in', res = 300)
+ggplot(tmp_table, aes(ID, Freq, fill = cell_cycle_phase)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL) + facet_wrap(~tmp_id, nrow = 2) + theme(legend.position = 'bottom')
+dev.off()
+
+tmp_table <- table(tmp_rt[c('cell_cycle_phase', 'tmp_id', 'ID')]) %>% as.data.frame() %>% group_by(tmp_id, cell_cycle_phase) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() %>% 
+  filter(!(tmp_id %in% c('RES 2080', 'MIXED 5050', 'SENS 8020')))
+
+png(file.path(wd, '..', 'paper_figures', 'p21_cell_cycle_02.png'), width = 12, height = 4, units = 'in', res = 300)
+ggplot(tmp_table, aes(cell_cycle_phase, Freq, fill = ID)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL) + facet_wrap(~tmp_id, nrow = 2) + theme(legend.position = 'bottom')
+dev.off()
+
+tmp_rt <- tmp_rt %>% select(-tmp_id)
+
+```
+
+```{r p53 mut ccph rt, fig.height = 8, fig.width = 14}
+
+tmp_rt <- tmp_rt %>% left_join(tmp_dictionary)
+tmp_table <- table((tmp_rt %>% filter(treatment == 'RT'))[c('p53.mut', 'ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+tmp_table %>% spread(p53.mut, Freq)
+ggplot(tmp_table, aes(ID, Freq, fill = p53.mut)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+tmp_table <- table((tmp_rt %>% filter(treatment == 'RT'))[c('cell_cycle_phase', 'response')]) %>% as.data.frame() %>% group_by(response) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+tmp_table %>% spread(response, Freq)
+ggplot(tmp_table, aes(response, Freq, fill = cell_cycle_phase)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+
+tmp_table <- table((tmp_rt %>% filter(treatment == 'RT'))[c('predicted.celltype', 'ID')]) %>% as.data.frame() %>% group_by(ID) %>% mutate(Freq = round(100*Freq/sum(Freq), 2)) %>% ungroup() 
+
+tmp_table %>% spread(ID, Freq)
+ggplot(tmp_table, aes(ID, Freq, fill = predicted.celltype)) + geom_col() + theme_bw() + coord_flip() + xlab(NULL) + ylab(NULL)
+ggplot(tmp_table, aes(ID, Freq, fill = ID)) + geom_col() + theme_bw() + xlab(NULL) + ylab(NULL) + facet_wrap(~predicted.celltype, scales = 'free_y', nrow = 2) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + theme(legend.position = 'none')
+
+```
+
+For each sample, calculate the relative proportion of cells in each fingerprint and do DR on it.
+
+```{r rt induction fps}
+
+tmp_samples <- tmp_rt %>% 
+  group_by(sample.id, treatment, ID) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  spread(treatment, P) %>% 
+  left_join(tmp_dictionary) %>% 
+  mutate(D = RT-Control) %>% 
+  select(sample.id, ID, D, response:Inhibition) %>% 
+  spread(ID, D, fill = 0) %>% 
+  unique() %>% 
+  group_by(sample.id) %>% 
+  sample_n(1) %>% 
+  ungroup()
+
+tmp_rownames <- tmp_samples$sample.id
+tmp_matrix <- tmp_samples %>% select(-sample.id, -response, -p53.mut, -AUC, -LogIC50, -MaxInhibition, -Inhibition) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rownames
+
+library(umap)
+custom.config <- umap.defaults
+
+custom.config$metric <- 'cosine'
+custom.config$n_neighbors <- 3
+
+tmp_umap <- umap(tmp_matrix, custom.config)
+tmp_tsne <- Rtsne::Rtsne(tmp_matrix, perplexity = 4)
+tmp_pca <- prcomp(tmp_matrix)
+
+library(slingshot)
+library(destiny)
+dm <- DiffusionMap(tmp_matrix)
+
+tmp_samples <- tmp_samples %>%
+  # as.data.frame()
+  mutate(uMap1 = tmp_umap$layout[,1], uMap2 = tmp_umap$layout[,2]) %>%
+  mutate(tsne1 = tmp_tsne$Y[,1], tsne2 = tmp_tsne$Y[,2]) %>%
+  mutate(PC1 = tmp_pca$x[,1], PC2 = tmp_pca$x[,2]) %>% 
+  mutate(DC1 = dm$DC1, DC2 = dm$DC2, DC3 = dm$DC3)
+
+# library(plotly)
+# plot_ly(x=tmp_samples$DC1, y=tmp_samples$DC2, z=tmp_samples$DC3, type="scatter3d", mode="markers", color=tmp_samples$response, size = 1)
+
+cl <- tmp_samples$response %>% as.factor()
+tmp_lineages <- getLineages(tmp_samples %>% select(DC1,DC2), cl)
+tmp_lineages
+
+tmp_curves <- getCurves(tmp_lineages)
+
+tmp_samples <- tmp_samples %>% 
+  mutate(curve.s1 = tmp_curves@curves$curve1$s[,1], 
+         curve.s2 = tmp_curves@curves$curve1$s[,2], 
+         order = tmp_curves@curves$curve1$ord,
+         pseudotime = slingshot::slingPseudotime(tmp_curves))
+
+tmp_samples <- tmp_samples %>% mutate(response = factor(response, levels = c('RES', 'MIXED', 'SENS')))
+
+# ggplot(tmp_samples, aes(uMap1, uMap2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_pseudotime_projection.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(DC1, DC2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw() + geom_line(data = tmp_samples, aes(curve.s1, curve.s2), color = 'black') + theme(legend.position = 'bottom')
+dev.off()
+ggplot(tmp_samples, aes(DC1, DC2, color = p53.mut)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw() + geom_line(data = tmp_samples, aes(curve.s1, curve.s2), color = 'black')
+
+library(ggpubr)
+
+comparisons_response <- list(c("RES", "MIXED"), c('RES', 'SENS'), c("MIXED", "SENS"))
+
+library(rstatix)
+
+stat.test <- tmp_samples %>%
+  # filter(response != 'MIXED') %>% 
+  t_test(pseudotime ~ response) %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance() %>% 
+  filter(p.adj < 0.05) %>% 
+  mutate(ID = paste(group1, group2, sep = '_')) %>% 
+  mutate(Pmax = as.numeric(plyr::mapvalues(ID, from = unique(ID), to = c(1.1)*max(tmp_samples$pseudotime))))
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_pseudotime_model.png'), width = 4, height = 4, units = 'in', res = 300)
+ggboxplot(tmp_samples, x = "response", y = "pseudotime", fill = "response") + #, palette = "jco", # ylim = c(0, 40)
+  theme_bw() + 
+  geom_jitter(alpha = 0.2) +
+  # scale_fill_manual(values = c('forestgreen', 'goldenrod', 'firebrick')) +
+  theme(legend.position = 'none') +
+  xlab(NULL) + ylab('Pseudotime') +
+  # facet_wrap(~predicted.celltype, ncol = 6) + 
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", y.position = 'Pmax')
+dev.off()
+
+tmp_samples <- tmp_samples %>% mutate(rank = rank(pseudotime))
+
+ggplot(tmp_samples, aes(rank, pseudotime, fill = response)) + geom_col() + theme_bw()
+
+ggplot(tmp_samples, aes(response, pseudotime, fill = response)) + geom_boxplot() + theme_bw() + geom_jitter(alpha = 0.1) 
+ggplot(tmp_samples, aes(pseudotime, AUC)) + theme_bw() + geom_point(aes(color = response)) + geom_smooth()
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_pseudotime_AUC.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(pseudotime, AUC)) + theme_bw() + geom_point(aes(color = response)) + geom_smooth(method = 'lm') + theme(legend.position = 'bottom')
+dev.off()
+
+# tmp_model_auc <- mgcv::gam(AUC ~ s(pseudotime, bs = 'cs'), data = tmp_samples, method = 'REML')
+tmp_model_auc <- lm(tmp_samples$AUC ~ tmp_samples$pseudotime)
+summary(tmp_model_auc)
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_pseudotime_logIC50.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(pseudotime, LogIC50)) + theme_bw() + geom_point(aes(color = response)) + geom_smooth(method = 'lm') + theme(legend.position = 'bottom')
+dev.off()
+
+tmp_model_ic50 <- lm(tmp_samples$LogIC50 ~ tmp_samples$pseudotime)
+# tmp_model_ic50 <- mgcv::gam(LogIC50 ~ s(pseudotime, bs = 'cs'), data = tmp_samples, method = 'REML')
+summary(tmp_model_ic50)
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_pseudotime_maxInhib.png'), width = 4, height = 4, units = 'in', res = 300)
+ggplot(tmp_samples, aes(pseudotime, MaxInhibition)) + theme_bw() + geom_point(aes(color = response)) + geom_smooth(method = 'lm') + theme(legend.position = 'bottom')
+dev.off()
+
+tmp_model_maxInhib <- lm(tmp_samples$MaxInhibition ~ tmp_samples$pseudotime)
+# tmp_model_maxInhib <- mgcv::gam(MaxInhibition ~ s(pseudotime, bs = 'cs'), data = tmp_samples, method = 'REML')
+summary(tmp_model_maxInhib)
+
+# ggplot(tmp_samples, aes(pseudotime, Inhibition)) + theme_bw() + geom_point(aes(color = response)) + geom_smooth()
+# ggplot(tmp_samples, aes(tsne1, tsne2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+# ggplot(tmp_samples, aes(PC1, PC2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+
+write.csv2(tmp_samples, file.path(wd, 'Results', 'tmp_samples_rt.csv'), row.names = FALSE)
+
+```
+
+Project biopsies
+
+```{r project biopsies rt}
+
+tmp_biopsy_labels <- read.csv2(file.path(wd, 'Data', 'Metatable_Biopsies_forPouya_011021.csv'), stringsAsFactors = FALSE)
+
+library(cutpointr)
+
+# tmp_biopsies1 <- read.csv2(file.path(wd, '..', 'DrugResponse forTumoral cells Biobsies.csv'), stringsAsFactors = FALSE)
+# tmp_biopsies2 <- read.csv2(file.path(wd, '..', 'DrugResponse for tumoral cells of the OLD biopsies.csv'), stringsAsFactors = FALSE)
+# 
+# tmp_biopsies <- tmp_biopsies1 %>% bind_rows(tmp_biopsies2)
+
+tmp_biopsies <- read.csv2(file.path(wd, 'Data', 'DrugResponseCorrected1310.csv'), stringsAsFactors = FALSE)
+
+tmp_samples_biopsy <- tmp_biopsies %>% 
+  filter(treatment != 'AMG232') %>% 
+  # gather(marker, group, BAX:pH2AX) %>% 
+  # filter(marker %in% c('CC3', 'MDM2')) %>% 
+  # filter(marker %in% c('CC3', 'p21')) %>% 
+  filter(marker %in% c('p21', 'pATM', 'pH2AX')) %>% 
+  mutate(sample.id = paste(sample.id, region, sep = '_')) %>% 
+  select(sample.id, treatment, OID, marker, group) %>% 
+  ungroup() %>% 
+  unique() %>% 
+  spread(marker, group) %>% 
+  mutate(p21 = ifelse(p21 == 0, 'p21_low', 'p21_high')) %>% 
+  mutate(pATM = ifelse(pATM == 0, 'pATM_low', 'pATM_high')) %>%
+  mutate(pH2AX = ifelse(pH2AX == 0, 'pH2AX_low', 'pH2AX_high')) %>%
+  mutate(ID = paste(p21, pATM, pH2AX, sep = '_')) %>% 
+  group_by(sample.id, treatment, ID) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  group_by(sample.id, treatment) %>% 
+  mutate(M = sum(N)) %>% 
+  ungroup() %>% 
+  mutate(P = 100*N/M) %>% 
+  select(-N, -M) %>% 
+  spread(treatment, P) %>% 
+  mutate(D = RT-Control) %>% 
+  filter(!is.na(D)) %>% 
+  select(sample.id, ID, D) %>% 
+  spread(ID, D, fill = 0) %>% 
+  unique() %>% 
+  group_by(sample.id) %>% 
+  sample_n(1) %>% 
+  ungroup()
+
+# tmp_biopsies1 <- read.csv2(file.path(wd, '..', 'DrugResponse forTumoral cells Biobsies.csv'), stringsAsFactors = FALSE)
+# tmp_biopsies2 <- read.csv2(file.path(wd, '..', 'DrugResponse for tumoral cells of the OLD biopsies.csv'), stringsAsFactors = FALSE)
+# 
+# tmp_biopsies <- tmp_biopsies1 %>% bind_rows(tmp_biopsies2)
+
+tmp_rownames <- tmp_samples_biopsy$sample.id
+tmp_matrix <- tmp_samples_biopsy %>% select(-sample.id) %>% as.matrix()
+rownames(tmp_matrix) <- tmp_rownames
+
+tmp_dm <- dm_predict(dm, tmp_matrix)
+tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+  mutate(DC1 = tmp_dm[,'DC1'], DC2 = tmp_dm[,'DC2'], DC3 = tmp_dm[,'DC3'])
+
+tmp_curve_biopsy <- predict(tmp_curves, tmp_samples_biopsy %>% select(DC1, DC2))
+
+tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+  mutate(curve.s1 = tmp_curve_biopsy@curves$curve1$s[,1], 
+         curve.s2 = tmp_curve_biopsy@curves$curve1$s[,2], 
+         order = tmp_curve_biopsy@curves$curve1$ord,
+         pseudotime = slingshot::slingPseudotime(tmp_curve_biopsy))
+
+ggplot(tmp_samples_biopsy, aes(curve.s1, curve.s2, color = pseudotime)) + geom_point() + theme_bw()
+
+tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+  mutate(AUC = tmp_model_auc$coefficients[1] + tmp_model_auc$coefficients[2] * pseudotime,
+         MaxInhibition = tmp_model_maxInhib$coefficients[1] + tmp_model_maxInhib$coefficients[2] * pseudotime) #predict(object = tmp_model_auc, data = pseudotime))
+
+cp <- cutpointr(tmp_samples %>% filter(response != 'MIXED'), pseudotime, response, 
+                method = maximize_metric, metric = sum_sens_spec)
+
+tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+  mutate(response = ifelse(pseudotime > cp$optimal_cutpoint, 'SENS', 'RES'))
+
+# ggplot(tmp_samples, aes(uMap1, uMap2, color = response)) + ggrepel::geom_label_repel(aes(label = sample.id)) + theme_bw()
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_pseudotime_projection_biopsies.png'), width = 8, height = 6, units = 'in', res = 300)
+ggplot(tmp_samples_biopsy, aes(DC1, DC2, color = response)) + geom_point() + ggrepel::geom_label_repel(aes(label = sample.id), max.overlaps = Inf) + theme_bw() + geom_line(data = tmp_samples_biopsy, aes(curve.s1, curve.s2), color = 'black') + theme(legend.position = 'bottom')
+dev.off()
+
+DT::datatable(tmp_samples_biopsy, filter = 'top')
+
+tmp_samples_biopsy <- tmp_samples_biopsy %>% 
+  arrange(MaxInhibition) %>% 
+  mutate(sample.id = factor(sample.id, levels = sample.id))
+
+png(filename = file.path(wd, '..', 'paper_figures', 'RT_pseudotime_projection_biopsies_maxInhib.png'), width = 5, height = 3, units = 'in', res = 300)
+ggplot(tmp_samples_biopsy, aes(sample.id, MaxInhibition, fill = response)) + geom_col() + theme_bw() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + theme(legend.position = 'bottom')
+dev.off()
+
+write.csv2(tmp_samples_biopsy, file.path(wd, 'Results', 'tmp_samples_biopsy_rt.csv'), row.names = FALSE)
+
+```
